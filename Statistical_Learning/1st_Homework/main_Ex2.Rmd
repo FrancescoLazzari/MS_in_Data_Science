@@ -127,8 +127,8 @@ set.seed(12052024)
 load("trackme.RData")
 
 # Set the API for the Maps ----------------------------
-register_stadiamaps(key = "cf63fa0b-c96f-4131-a58e-caba78807030")
-register_google(key = "AIzaSyD5l1Ah1CfHhpv_e8nclbclBA-wBCpB3As")
+register_stadiamaps(key = "****")
+register_google(key = "****")
 
 # Map boundaries
 myLocation <- c(min(runtrack$lon, na.rm = T), 
