@@ -1,0 +1,29 @@
+# GROUP NUMBER:	21
+
+# STUDENTS:
+  -  Francesco Lazzari  1917922
+  -  Riccardo  Violano  2148833
+
+# DATA:
+The data can be downloaded from the following GitHub repository:
+   -  https://github.com/tidyverse/nycflights13/tree/main
+
+NOTE: In the repository the 5 tables are not all present in the .csv format (table flights is only in .Rdata)
+      So, we initially dowloaded all the .Rdata file and opened them in RStudio and converted them into .csv file using the following code:
+        -  write.csv(imported_table, "new_data_name.csv", row.names = FALSE)
+      In order to speed up this process we have also submitted all the original data already converted into .csv that can be found into the 'Data' folder
+
+# MATERIALS:
+  -  'HW1_Database_creation.sql'  -> SQL code for the creation of the initial Database for HW1 
+  -  'HW2_Database_creation.sql'  -> SQL code for the creation of the refined schema for HW2
+  -  'Preprocessing.ipynb'        -> Jupyter notebook with the python code used for the preprocessing of the original Data uploaded on GitHub
+  -  'HW1_query.sql'              -> SQL code containing the query for the HW1 assignment 
+  -  'HW2_query.sql'              -> SQL code containing the optimized query for the HW1 assignment 
+
+
+# ADDITIONAL MATERIALS:
+  -  'EER - Diagrams.png'         -> .png file with the Enhanced Entity-Relationship Diagrams of the two schemas created for the assignments
+  -  'Data'                       -> Folder with the original data that can be found on GitHub already converted into .csv file
+  -  'Insert Data'                -> Folder with the two SQL file used for inserting the records into the two databases
+      -  'HW1_global_insert.sql'  -> SQL code for the insert statements for the schema for HW1
+      -  'HW1_global_insert.sql'  -> SQL code for the insert statements for the schema for HW2
