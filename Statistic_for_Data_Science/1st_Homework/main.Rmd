@@ -1,0 +1,1106 @@
+---
+title: "Stat4DS - HW1"
+author: "Group 19 - Lazzari, Mari"
+date: "Winter Semester 2023"
+output: 
+  rmarkdown::html_document:
+    theme: flatly
+    toc: yes
+    toc_float:
+      collapsed: true
+runtime: shiny
+---
+
+<style>
+body {
+  text-align: justify;
+}
+.shiny-frame{
+  width: 850px;
+  height: 600px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Requred packages
+
+```{r}
+# Cleaning of the workspace
+rm(list = ls())
+
+# Install the required packages
+if (!requireNamespace("shiny", quietly = TRUE)) {
+  install.packages("shiny")
+}
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+if (!requireNamespace("knitr", quietly = TRUE)) {
+  install.packages("knitr")
+}
+if (!requireNamespace("gridExtra", quietly = TRUE)) {
+  install.packages("gridExtra")
+}
+
+
+# Load the required packages
+library(shiny)
+library(ggplot2)
+library(knitr)
+library(gridExtra)
+
+# Import the custom functions we will use 
+source("functions.R")
+
+```
+
+# Exercise 1
+
+## Definition of the problem
+
+
+For this problem we have $n=150$ students of which $n-k$ honest students come from a bernullian distribition $H_j \sim Ber(p=0.5)$ while $k$ liars student come from a bernoulli variable $L_j \sim Ber(q)$ with $q \in (0,1)$. 
+
+The initial task presented to us is to select a decision rule. This rule will guide us in determining, after all students have tossed a coin N times, whether a given student is truthful or deceitful. It is evident from the problem statement that we need to develop a statistical test for a singular binomial random variable with a sample size of N. The hypotheses involved in this test constitute a unilateral system, namely $H_0: \theta_0=0.5$ and $H_1: \theta_1>\theta_0$.
+
+Utilizing the **Karlin-Rubin** theorem, we can construct a **Uniformly Most Powerful (UMP)** test for a given fixed $\alpha$ value. This involves establishing the test threshold at the $1-\alpha$ level quantile of a binomial variable characterized by parameters $(N,\theta_0)$.
+
+
+However, if we observe the distribution of honest and dishonest students after N tosses, we can note a few things:
+
+- the two distributions, with the parameter $q$ held constant, become increasingly distinguishable as $N$ grows, as their variability decreases. 
+
+- the two distributions, with $N$ fixed, diverge further as the parameter $q$ increases, given that the difference between their expected values grows. 
+
+
+Both of these variations are clearly visible in the interactive the plot below, which allows simultaneous adjustments of both parameters $N$ and $q$.
+
+```{r echo=FALSE}
+createPlot = function(N, h1) {
+  
+  h0 = 0.5
+  
+  dati = data.frame(
+    x = rep(0:N, 2),
+    theta = rep(c(h0, h1), each = N + 1),
+    y = dbinom(0:N, size = N, prob = rep(c(h0, h1), each = N + 1))
+  )
+
+  threshold = find.threshold(N, h0, h1)
+
+  if (dbinom(threshold, N, h0) > dbinom(threshold, N, h1)) {
+    y_treshold = dbinom(threshold, N, h0)
+  } else {
+    y_treshold = dbinom(threshold, N, h1)
+  }
+
+  UMP_threshold = qbinom(0.95, N, h0)
+
+  mean_h0 = N * h0
+  dev_std_h0 = sqrt(N * h0 * (1 - h0))
+
+  mean_h1 = N * h1
+  dev_std_h1 = sqrt(N * h1 * (1 - h1))
+  
+  ggplot(dati, aes(x, y, color = as.factor(theta), fill = as.factor(theta))) +
+         geom_point(size = 3) +
+         geom_line(aes(x, dnorm(x, mean = mean_h0, sd = dev_std_h0)), 
+                   color = "darkgreen", linetype = "dashed", linewidth = 0.8) +
+         geom_line(aes(x, dnorm(x, mean = mean_h1, sd = dev_std_h1)), 
+                   color = "#CD0000", linetype = "dashed", linewidth = 0.8) +
+         geom_ribbon(data = dati[dati$x <= threshold & dati$theta == h1, ], 
+                     aes(x = x, ymin = 0, ymax = y, fill = "Beta"), alpha = 0.3) +
+         geom_ribbon(data = dati[dati$x >= threshold & dati$theta == h0, ], 
+                     aes(x = x, ymin = 0, ymax = y, fill = "Alpha"), alpha = 0.3) +
+         geom_vline(xintercept = UMP_threshold, color = "purple", linetype = "dashed") +
+         labs( title = paste("H ~ Bin(", N,",", h0,")", "  &  L ~ Bin(", N,",", h1, ")"),
+               x = "Number of success",
+               y = "Density") +
+         scale_color_manual(values = c("darkgreen", "#CD0000"),
+                            name = "Parameter:") +
+         scale_fill_manual(values = c("Alpha" = "green", "Beta" = "red"), name = "Error:") +
+         scale_x_continuous(breaks = seq(0, N, by = 2)) +
+         annotate("segment", size = 2.5, linewidth = 0.5, linetype = "dashed",
+                  x = threshold, xend = threshold, 
+                  y = -Inf, yend = y_treshold,
+                  colour = "black" ) +
+         theme_minimal() +
+         theme(legend.position = "right") + 
+         guides( color = guide_legend(override.aes = list(fill = NA, linetype = "dashed", key_glyph = "dashed")) ,
+                 fill = guide_legend(override.aes = list(shape = NA)) )
+}
+
+server = function(input, output) {
+  output$grafico = renderPlot({ createPlot(input$N, input$h1) })
+}
+
+ui = fluidPage( titlePanel("Distribution of the honest and liar student after N toss"),
+     fluidRow( column(12, plotOutput("grafico", height = 300)),
+               column(12, offset = 0, 
+                      sliderInput("N", "Number of toss:", min = 5, max = 50, 
+                                  value = 30, width = "100%", step = 1),
+                      sliderInput("h1", "Probability of success of each toss for liar students:", 
+                                  min = 0.55, max = 0.95, 
+                                  value = 0.75, step = 0.05, width = "100%")) ))
+
+shinyApp(ui = ui, server = server)
+
+```
+
+## New threshold definition
+
+
+In light of these considerations, we believe that the UMP test, while a good solution, can be enhanced by implementing a decision criterion that globally minimizes the probabilities of both first and second type errors. 
+
+This strategy involves setting the test threshold not at a fixed point dependent on a fixed $\alpha$ value, but at a variable point located at the intersection of the two distributions. However, since these are discrete variables and do not have a continuous distribution, we have opted to utilize the normal approximation to find this intersection and subsequently approximate it to the nearest integer value.
+
+The use of normal approximations has been possible because each student, after $N$ tosses, constitutes an independent and identically distributed sample of a Bernoulli random variable, for which the following result holds:
+
+$$  X_1,\ ... \ ,X_n \quad iid \qquad \text{with} \qquad  X_i \sim Bern(\theta)$$
+$$ \Rightarrow \ \sum_{i=1}^n X_i \sim  Bin \left(n, \theta \right) \quad \dot{\sim} \quad N \ \left(\mathbb{E}[X_i],\frac{\mathbb{V}[X_i]}{n} \right) $$
+
+Seeking to automate the implementation of this strategy, we have constructed the following R function named **find.threshold**. This function takes as input the parameters $N$, $p$, and $q$, which have been thoroughly defined in the preceding paragraph.
+
+```{r eval=FALSE}
+find.threshold = function(N, p, q) {
+  # Calculate the parameters of the approximate normal distribution of the honest studets
+  mean_h0 = N * p
+  dev_std_h0 = sqrt(N * p * (1 - p))  
+  
+  # Calculate the parameters of the approximate normal distribution of the liar studets
+  mean_h1 = N * q
+  dev_std_h1 = sqrt(N * q * (1 - q))
+  
+  # Find the intersection with the uniroot function
+  intersection = uniroot(
+    function(x) dnorm(x, mean = mean_h0, sd = dev_std_h0) - dnorm(x, mean = mean_h1, sd = dev_std_h1),
+    interval = c(0, N)
+  )
+  
+  # Round the root to the nearest integer
+  threshold = round(intersection$root)
+  
+  return(threshold)
+}
+
+```
+
+
+The evidence supporting the better performance of this strategy over the UMP test has already been presented in the plot in the previous section. This figure highlighted alpha and beta errors with shaded green and red regions, respectively, based on this criterion. Additionally, it vertically marked the threshold for the standard UMP test with $\alpha_{UMP}=0.05$ using a purple line. It's easy to observe from this comparison that our decision rule overall results in minimal global error.
+
+However, aiming to demonstrate it numerically, we computed the overall error of the two tests, varying both the parameter $q$ and the parameter $\alpha_{UMP}$. We calculated the percentage of times our criterion achieved a better result for each fixed number of tosses $N$ up to a maximum value named $N_{\text{max}}$. This comparison was automated through the specifically designed function called **Calculate_Error_difference**, yielding the following result.
+
+
+
+```{r warning, warning = FALSE}
+
+# Define the sequences of both parameters necessary for the comparison
+alpha_UMP = seq(0.05, 0.20, 0.05)
+q_val = seq(0.55, 0.95, 0.05)
+
+# Save the output of the comparison for 150 maximum tosses
+result = calculate_Error_Difference(N_max = 150, alpha_UMP, q_val)
+
+# Print the output in a Markdown table
+kable(result, format = "markdown", col.names = c("alpha-UMP ~ q", as.character(q_val)), caption ="Table 1: Percentage Comparison of the Total Error")
+
+```
+
+
+It is clear from the previous table how our criterion is almost universally better than the UMP test, even when varying the values of $\alpha_{UMP}$. Certainly, it would be interesting to see what the actual difference was between the two tests in that $1-2\%$ of cases where the UMP test proved to be better. However, since the choice of the decision criterion is not the focus of this exercise, we have decided to proceed further.
+
+## Score function
+
+
+The second request for this problem involved writing a score function that synthesizes, as $N$ varies, how the $\alpha$ and $\beta$ values obtained with our decision rule deviate from target values called $\alpha^{*}$ and $\beta^{*}$.
+
+For this purpose, we defined the function **score.function1**, which calculates, as $N$ varies, the average distance between the two variables and their target values. Certainly, this function takes values between $0$ and $1$, as all variable are probablity. Furthermore, we imposed the constraint that if either one of the two variables, $\alpha$ or $\beta$, exceeds rispective target, then the respective distance is set to $0$. This means that our score function only considers how many tosses $N$ are needed to reach both targets. 
+
+Since we prefer an increasing score function, we use the reciprocal of the previously found measure.
+
+
+$$ f(N| \alpha^{*}, \beta^{*}) = 1 - \frac{1}{2} \left[ (\alpha-\alpha^{*}) \underset{\alpha \ge\alpha^{*} }{1} + (\beta - \beta^{*})\underset{\beta \ge\beta^{*} }{1}  \right]  $$
+
+```{r}
+# Code used to build the score function
+score.function1 = function(N, alpha.star, beta.star, q){
+  
+  p = 0.5
+  
+  # Find alpha an beta associated to the parameters N and q
+  t = find.threshold(N, p, q)
+  alpha = 1 - pbinom(t, N, p)
+  beta = pbinom(t, N, q)
+
+  if(alpha>alpha.star){
+  
+    # Calculate the distance between alpha and alpha.star
+    D_alpha = (alpha-alpha.star)
+    
+  } else{ D_alpha = 0 }
+
+  if(beta> beta.star){
+  
+    # Calculate the distance between beta and beta.star
+    D_beta = (beta-beta.star)
+  } else{ D_beta = 0 }
+
+  # Calculate the mean between the two distances.
+  Score = (1/2) * (D_alpha + D_beta)
+  
+  # Return the of the prvious score
+  return(1-Score)
+  
+}
+
+```
+
+
+
+
+
+### Performance of the score function
+
+From the examination of the score function shown in the Plot below, we can observe that it tends to have a logarithmic trend characterized by a more angular curve as the parameter $q$ increases. This variation was obviously predictable since, as we mentioned in the first paragraph, with the increase of $q$, the error probabilities decrease, necessitating fewer tosses to reach the predetermined targets.
+
+
+```{r echo=FALSE, fig.width=10, fig.height=7}
+alpha.star = 0.05
+beta.star = 0.1
+p = 0.5
+q_values = c(0.6, 0.7, 0.8)
+N_max = 100
+
+# Initialization of the dataframe.
+Score_data = data.frame(N = rep(seq(1, N_max, 1), length(q_values)),
+                        Score = rep(0, N_max * length(q_values)),
+                        q = rep(q_values, each = N_max))
+
+# For loop to iterate through all the values of q
+for (j in seq_along(q_values)) {
+  q = q_values[j]
+  
+  # Calculation of all the N_max scores for the given alpha.star
+  for (i in 1:N_max) {
+    # For each j-th value of q, place the respective scores in the j-th * N_max rows
+    Score_data$Score[(j - 1) * N_max + i] = score.function1(i, alpha.star, beta.star, q)
+  }
+}
+
+# Plot of the score function as q varies.
+ggplot(Score_data, aes(x = N, y = Score, color = factor(q))) +
+       geom_line() +
+       labs(title = "Performance of the Score Function by varing the parameter q",
+            subtitle = expression(paste("The target values are set to ", alpha^'*', "= 0.05 and ", beta^'*', "=0.1")),
+            x = "Number of toss of each student",
+            y = "Score") +
+       theme_minimal() +
+       scale_color_discrete(name = "q-values:")+
+       theme(legend.position = "bottom") 
+```
+
+
+A similar trend emerges when increasing the target parameters, aligning with our expectations. As the error tolerance grows, the required number of tosses decreases.
+
+However, upon examining the graph below, a couple of observations can be made:
+
+- Firstly, individually increasing alpha and beta results in a less pronounced steepening of the score function compared to the effect achieved by increasing $q$. This observation aligns with intuition, as when the distributions are closely situated, augmenting error tolerance doesn't yield the same reduction in the required number of tosses as it would if the distributions were more separated. Consequently, among the three parameters, $q$ appears to exert the most significant influence.
+
+- Secondly, it is evident that as tolerance increases, the oscillation of the score function also intensifies, particularly with the growth of $N$.
+
+
+```{r echo = FALSE, fig.width=10, fig.height=7}
+
+p = 0.5
+# Set the value of q to 0.6 in order to have a less angular curve
+# to better see the changes attributable to alpha.star
+q = 0.6
+N_max = 100
+
+beta_star = 0.1
+alpha_star_values = c(0.05, 0.15, 0.25)
+
+
+# Initialization of the dataframe.
+Score_data_alpha = data.frame(N = rep(seq(1, N_max, 1), length(alpha_star_values)),
+                              Score = rep(0, N_max * length(alpha_star_values)),
+                              alpha.star = rep(alpha_star_values, each = N_max),
+                              q = rep(q, times = N_max * length(alpha_star_values)))
+
+# For loop to iterate through all the values of alpha.star
+for (k in seq_along(alpha_star_values)) {
+  alpha_star = alpha_star_values[k]
+  
+  # Calculation of all the N_max scores for the given alpha.star
+  for (i in 1:N_max) {
+
+    # For each k-th value of alpha star, place the respective scores in the k-th * N_max rows
+    Score_data_alpha$Score[(k - 1) * N_max + i] = score.function1(i, alpha_star, beta_star, q)
+  }
+}
+# Plot of the score function as alpha.star varies.
+Plot_3_alpha =  ggplot(Score_data_alpha, aes(x = N, y = Score, color = factor(alpha.star))) +
+            geom_line() +
+            labs(x = "Number of toss of each student",
+                 y = "Score") +
+            theme_minimal() +
+            scale_color_discrete(name = expression(paste(alpha^'*', " values:")))+
+            theme(legend.position = "bottom") +
+            ggtitle(expression(paste("Variation of the ",alpha^'*' ,"target with ", q, "= 0.6 and ", beta^'*', "=0.1")))
+
+
+
+beta_star_values = c(0.1, 0.2, 0.3)
+alpha_star = 0.05
+
+# Initialization of the dataframe.
+Score_data_beta = data.frame(N = rep(seq(1, N_max, 1), length(beta_star_values)),
+                             Score = rep(0, N_max * length(beta_star_values)),
+                             beta.star = rep(beta_star_values, each = N_max),
+                             q = rep(q, times = N_max * length(beta_star_values)))
+
+# For loop to iterate through all the values of beta.star
+for (k in seq_along(beta_star_values)) {
+  beta_star = beta_star_values[k]
+  
+  # Calculation of all the N_max scores for the given beta.star
+  for (i in 1:N_max) {
+    
+    # For each k-th value of beta.star, place the respective scores in the k-th * N_max rows
+    Score_data_beta$Score[(k - 1) * N_max + i] = score.function1(i, alpha_star, beta_star, q)
+  }
+}
+# Plot of the score function as beta.star varies.
+Plot_3_beta = ggplot(Score_data_beta, aes(x = N, y = Score, color = factor(beta.star))) +
+              geom_line() +
+              labs(x = "Number of toss of each student",
+                   y = "Score") +
+              theme_minimal() +
+              scale_color_discrete(name = expression(paste(beta^'*', " values:")))+
+              theme(legend.position = "bottom") +
+              ggtitle( expression(paste("Variation of the ",beta^'*' ,"target with ",  q, "= 0.6 and ", alpha^'*', "=0.05")))
+
+
+grid.arrange(Plot_3_alpha, Plot_3_beta, nrow = 1)
+
+```
+
+
+### Decision rule
+
+Having defined the score function, we need to choose a strategy that allows us to find an optimal value for $N$. Since the general trend of the function is logarithmic, our goal is to select a number of toss located at the corner of the curve. This choice, clearly, does not represent an optimal selection concerning all the values $N^{*}$ that ensure a $f(N)=1$. However, this strategy it has the advantage of excluding those values of $N$ that guarantee only a minimal increase in the score function.
+
+
+Unfortunately, this decision rule, while easily applicable when looking at a graph, presents some challenges in its mathematical implementation. This is mainly due to frequent small oscillations in the score function. In order to overcome this issue, we chose to apply a $10$-term moving average to smooth out the trend of the function $f(N)$. 
+
+
+Subsequently, in order to identify the corner of the function, we proceed by calculating, for each value of the smoothed series, the growth rate for the next $5$ periods. This calculation has been automated with the specifically written function called **growth_rate**, which takes as parameters a time series and the number of steps to calculate the rate.
+
+
+All these mathematical steps have been included in a dedicated function called **find.N.substar**, which subsequently chooses the first value of $N_{sub}^{*}$ that satisfies the following condition:
+
+- has a growth rate below the threshold of $0.01$ in the next $5$ periods.
+
+```{r}
+
+find.N.substar = function(N_max, alpha.star, beta.star, q) {
+  # Definitio of the range in which the score function is calculated
+  N_values = 1:N_max  
+  
+  # Calculate the score function for all the N_values
+  scores = sapply(N_values, function(N) score.function1(N, alpha.star, beta.star, q))
+  
+  # Apply the moving average with 10 terms to the score function
+  smoothed_scores = stats::filter(scores, rep(1/10, 10), sides = 2)
+  
+  # Calculate all growth rates with step 5 on the smoothed score function
+  rate_of_growth = growth_rate(smoothed_scores, 5)
+
+  # Find N_sub_star comparing growth rates with a treshold=0.01
+  N_sub_star <- N_values[which(rate_of_growth < 0.01 )[1]]
+
+  return(N_sub_star)
+}
+
+```
+
+Certainly, the threshold chosen for the growth rate is not equally effective for all values of the parameter $q$. It should be adjusted based on this parameter since it significantly influences the curvature of the score function. However, regardless of whether this correction is applied or not, this selection criterion is clearly *suboptimal* with the purpose of balancing a low $N$ value with a high $f(N)$ score.
+
+A significant drawback of this decision rule lies in the choice of the number of terms in the moving average. They have indeed been intentionally chosen to be very numerous to ensure a high level of smoothing, essential for the criterion used. However, by the definition of a moving average, this results in truncation of the five initial terms of the series, which could be the sub-optimal values in extreme cases where $q$ is significantly larger than $p$.
+
+The truncation of the last five terms is a negligible issue because it can be easily circumvented by extending the $N_{\text{max}}$ terms for which the score function is calculated.
+
+Below, we have attached, for explanatory purposes, a graphical example of the application of this decision rule.
+
+```{r , echo=FALSE, warning=FALSE, fig.width=10}
+alpha.star = 0.05
+beta.star = 0.1
+p = 0.5
+q = 0.65
+N_max = 100
+
+N_values = 1:N_max
+Scores = sapply(N_values, function(N) score.function1(N, alpha.star, beta.star, q))
+Smoothed = stats::filter(Scores, rep(1/10, 10), sides = 2)
+
+Smoothed_score = data.frame(N_values, Scores, Smoothed )
+N_sub_star = find.N.substar(N_max, alpha.star , beta.star , q)
+
+# Print the plot of the decision rule
+ggplot(Smoothed_score, aes(x = N_values)) +
+  geom_line(aes(y = Scores, color = "Score Function"), linetype = "solid", linewidth = 0.7) +
+  geom_line(aes(y = Smoothed, color = "Smoothed Score Function"), size = 1, linetype = "solid", alpha = 0.7) +
+  geom_point(aes(x = N_sub_star, y = score.function1(N_sub_star, alpha.star, beta.star, q)), color = "gold", size = 3, shape = 8) +
+  geom_label(aes(x = N_sub_star + 8, y = score.function1(1, alpha.star, beta.star, q), 
+                 label = paste("sub-N* = ", N_sub_star)), color = "black", size = 4) +
+  labs(x = "Number of toss of each student", y = "Score") +
+  annotate("segment", size = 2.5, linewidth = 0.5, linetype = "dashed",
+           x = N_sub_star, xend = N_sub_star,
+           y = -Inf, yend = score.function1(N_sub_star, alpha.star, beta.star, q),
+           colour = "black") +
+  scale_x_continuous(breaks = seq(0, N_max, by = 20)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.1)) +
+  theme_minimal() +
+  scale_color_manual(values = c("Score Function" = "dodgerblue", "Smoothed Score Function" = "#CD0000"), name= "Function:") +
+  theme(legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold")) +
+  ggtitle(expression(paste("Decision rule with q=0.65, ", alpha^'*',"=0.05 & ",beta^'*',"=0.1")))
+```
+
+Here we wanted to present some examples of $N_{sub}^{*}$ values calculated for increasing values of $q=\{0.6, 0.7, 0.8, 0.9 \}$, fixing certain error targets. These calculations have been automated using the dedicated function **calculate_N_substar**. 
+
+The second table shows these values for $\alpha^{*}=0.05$ and $\beta^{*}=0.1$.
+
+```{r}
+q_values = seq(0.6, 0.9, by = 0.1)
+
+result_matrix = calculate_N_substar(N_max=150, alpha.star=0.05, beta.star=0.1, q_values)
+
+# Print the result in a markdown table
+kable(result_matrix, format = "markdown", col.names = as.character(q_values), caption ="Table 2: Sub-N* for increasing values of q with alpha-star = 0.05 & beta-star = 0.1")
+
+```
+
+The third table shows the $N_{sub}^{*}$ values for $\alpha^{*}=0.1$ and $\beta^{*}=0.15$.
+
+```{r}
+q_values = seq(0.6, 0.9, by = 0.1)
+
+result_matrix = calculate_N_substar(N_max=150, alpha.star=0.1, beta.star=0.15, q_values)
+
+# Print the result in a markdown table
+kable(result_matrix, format = "markdown", col.names = as.character(q_values), caption ="Table 3: Sub-N* for increasing values of q with alpha-star = 0.1 & beta-star = 0.15")
+```
+
+The last table shows the $N_{sub}^{*}$ values for $\alpha^{*}=0.15$ and $\beta^{*}=0.2$.
+
+```{r}
+q_values = seq(0.6, 0.9, by = 0.1)
+
+result_matrix = calculate_N_substar(N_max=150, alpha.star =0.15, beta.star=0.2, q_values)
+
+# Print the result in a markdown table
+kable(result_matrix, format = "markdown", col.names = as.character(q_values), caption ="Table 4: Sub-N* for increasing values of q with alpha-star = 0.15 & beta-star = 0.2")
+```
+
+It is evident from the results of the three previous tables how the value of $N_{sub}^{*}$ decreases with the increase in $q$ and the tolerated error target values.
+
+
+## Time constraints
+
+In the second part of this exercise, a time constraint of $T$ minutes has been introduced within which we must check at least half of the students, who are fixed at $n = 150$ knowing that each coin toss requires $3$ seconds and that they must be performed sequentially.
+
+
+To build a new score function that takes into account this situation, we started with the one previously constructed and made the some modifications. Firstly, we need to distinguish two distinct cases depending on the number of $N_{\text{max}}$ tosses that each student in half of the tested class can perform at most, given the constraint $T$:
+
+1. $N_{\text{max}} \le N^{*} \quad \to$  in this case, we will never reach our fixed target $\alpha^{*} \& \beta^{*}$, so we use the same values obtained from the **score.function1**;
+
+2. $N_{\text{max}} > N^{*} \quad \to$ in this case, we will reach our fixed target $\alpha^{*} \& \beta^{*}$, and each student still has some tosses available that are not strictly necessary. If previously this excess was not penalized, now, due to the time constraint and the fact that we are testing only half of the class, this waste of tosses compared to the $N^{*}$ threshold will result in a penalty for the **score.function1**. This penalty has been quantified with the weight 
+
+$$w= \frac{(N_{\text{max}} - (i-N^{*}))}{N_{\text{max}}} \qquad \text{where} \qquad i= N^{*}+1, ... , N_{\text{max}}$$
+
+It is evident from the construction of the weight w that the penalty applied in the case of a time loss is incremental. Therefore, we can define the new **score.function2** as:
+
+$$ g\left(N | \alpha^{*}, \beta^{*}, T \right) = 
+\begin{cases}
+  f(N;\alpha^{*}, \beta^{*})  & \text{if} \ \  N_{\text{max}} \le N^{*}\\ 
+  f(N;\alpha^{*}, \beta^{*}) * w  & \text{if} \ \  N_{\text{max}} > N^{*}
+\end{cases} 
+\qquad \text{where} \qquad N_{\text{max}} = \frac{T \cdot 60}{3 \cdot (n/2)} $$
+
+
+```{r}
+score.function2= function( alpha.star, beta.star, q, Time){
+  
+  p=0.5
+  # Find N_star using a specific function that returns 
+  # the first value of the score.function.1 with a score equal to 1.
+  N_star = find.N.star(alpha.star, beta.star, q)
+  
+  # Calculate the maximum number of tosses possible for half of the students 
+  # within the established time constraint
+  N_max = (Time*60)/(3*75) 
+  
+  N = seq(1,N_max, 1)
+  Score_T= rep(0, N_max)
+  
+  for(i in 1:N_max){
+    if(N_max <= N_star){
+      # case 1 
+      Score_T[i] = score.function1(i, alpha.star, beta.star, q)
+      
+    } else if( N_max > N_star){
+        # case 2
+        if(i<=N_star){
+           Score_T[i] = score.function1(i, alpha.star, beta.star, q)
+        } else{
+          w = (N_max - (i-N_star))/N_max
+          Score_T[i] = score.function1(i, alpha.star, beta.star, q) * w
+      }
+    }
+  }
+  return(Score_T)
+}
+
+```
+
+
+In this situation as well, we can define a decision rule based on the behavior of the function $g(N)$. Based on the value of $N_{\text{max}}$ determined by $T$, we can adopt different solutions:
+
+- If $N_{\text{max}} \ge N^{*}$, then we can use both the suboptimal decision rule of $N_{sub}^{*}$ and the one of $N^{*}$, which will now be a unique value with a score of $1$. The choice between the two depends on whether one wants to achieve the target performance chesen with $\alpha^{*}$ and $\beta^{*}$ or is willing to make a tradeoff between performance and the number of tosses.
+
+- If $N_{\text{max}} < N^{*}$, then the only sensible choice is to take the value of $N$ with the highest score, which in any case will not guarantee the desired performance but will provide the best solution we can obtain under the time constraint.
+
+Note that the possibility of increasing the targets $\alpha^{*} \ \text{and} \ \beta^{*}$ would only lead to a variation of the scores in the score function but not to an improvement in test performance. Therefore, we believe that they should be set independently, and subsequently, one of the previous strategies should be adopted. In fact, the suboptimal strategy of $N_{sub}^{*}$ already corresponds to an enlargement of the target parameters.
+
+
+In the following Plot, one trend of the score function is shown as examples. The parameters are fixed to $q=0.75$, $\alpha^{*}=0.05$, $\beta^{*}=0.1$ and $T=180$ which has been intentionally chosen to be high in order to display both segments of the new score function.
+
+```{r, echo=FALSE}
+Scores = score.function2(0.05, 0.1, 0.75, 180)
+N_max_seq = 1:length(Scores)
+
+Score_T = data.frame(N = N_max_seq , Scores)
+
+ggplot(Score_T, aes(x = N, y = Scores)) +
+  geom_line() +
+  labs(x = "Number of tosses we can perform given T", y = "Scores", title = "Score function with time constraint") +
+  theme_minimal()
+
+```
+
+In the case of $T=15$ with the usual targets $\alpha^{*}=0.05$ and $\beta^{*}=0.1$, we obtain these values of the **score.function2**
+
+```{r}
+minutes = 15
+N_max = (minutes * 60) / (3 * 75)
+q_values = seq(0.6, 0.9, 0.1)
+
+alpha.star = 0.05
+beta.star = 0.1
+
+# Initialize the matrix with the results
+Score_T = matrix(NA, nrow = N_max, ncol = length(q_values))
+
+for (i in seq_along(q_values)) {
+  Score_T[, i] <- score.function2(alpha.star, beta.star, q_values[i], minutes)
+}
+
+# Add a column with the number of toss 
+Score_T = cbind(N = seq_len(nrow(Score_T)), Score_T)
+
+# Show the matrix as a markdown table
+kable(Score_T, format = "markdown", col.names = c("N ~ q", as.character(q_values)), caption = "Table 5: Score values with parameters T=15, alpha-star=0.05, and beta-star=0.1.")
+
+```
+
+As we can see from the previous table, given the limited time we have available, the $75$ tested students can make a maximum of $4$ tosses each. Additionally, this constraint prevents us from reaching the target threshold even in the case where $q$ is almost close to $1$.
+
+In order to achieve a **score.function2** value equal to $1$, we progressively increased the error tolerance $\alpha^{*}$ and $\beta^{*}$ until we reached the following table.
+
+```{r}
+minutes = 15
+N_max = (minutes * 60) / (3 * 75)
+q_values = seq(0.6, 0.9, 0.1)
+
+alpha.star = 0.15
+beta.star = 0.3
+
+# Initialize the matrix with the results
+Score2_T = matrix(NA, nrow = N_max, ncol = length(q_values))
+
+for (i in seq_along(q_values)) {
+  Score2_T[, i] = score.function2(alpha.star, beta.star, q_values[i], minutes)
+}
+
+# Add a column with the number of toss 
+Score2_T = cbind(N = seq_len(nrow(Score2_T)), Score2_T)
+
+# Show the matrix as a markdown table
+kable(Score2_T, format = "markdown", col.names = c("N ~ q", as.character(q_values)), caption = "Table 6: Score values with parameters T=15, alpha-star=0.15, and beta-star=0.3.")
+
+```
+
+It is evident that to achieve a maximum score, we had to triple the acceptable margin of error, and even in this case, we reach values close to $1$ only when the $q$ parameter is very high. In conclusion, we can say that this constraint hinders a good estimation of honest and dishonest students and should be significantly incremented.
+
+
+# Exercise 2
+## Part 1
+
+We are asked to implement a KDE for a Beta distribution and its corresponding quantile function. We start defining the KDE picking the Epanechnikov Kernel : $k(x)=\frac{3}{4}(1-x)^2\mathbb{1}_{[-1,1]}$.
+The general expression for the KDE is : 
+$$\hat{f}_h(x)=\frac{1}{N}\sum_{i=1}^N{\frac{1}{h}k\left(\frac{x-X_i}{h}\right)}$$ 
+where $N$ is the sample size and $X_1,X_2,\cdots,X_N$ are the realization of our population model.
+
+The following is the code for our KDE implementation.
+```{r}
+### Epanechnikov kernel density estimator
+
+f_estimator <- function(x, sample, bandwidth) {
+  N <- length(sample)
+  
+  #the epanechnikov kernel
+  k <- function(u) {
+    return((3/4) * (1 - u^2) * (abs(u) <= 1))
+  }
+  k_vectorized = Vectorize(k)
+  
+  f_hat <- rep(0, length(x))
+  
+  for (i in 1:N) {
+    u <- (x - sample[i]) / bandwidth
+    f_hat <- f_hat + k_vectorized(u) / (N * bandwidth)
+  }
+  
+  return(f_hat)
+}
+```
+
+Then since we can find a closed formula for the CDF of the KDE, we implement it too.
+Let's see how we can find it.
+
+
+We reached the formula above simply using the relation between CDF and density.
+$$
+\hat{F}_h(x)=\int_{-\infty}^{x}{\hat{f}_h(v)dv} = \frac{1}{N}\sum_{i=1}^N{\int_{-\infty}^{x}{\frac{1}{h}k\left(\frac{v-X_i}{h}\right)dv}}=\frac{1}{N}\sum_{i=1}^N{\int_{-\infty}^{\frac{x-X_i}{h}}{k(t)dt}}
+$$
+Now in general let $I(z)=\int_{-\infty}^z{k(t)dt}$, then we can simply derivate that
+$$
+I(z)=
+\begin{cases}
+0 & \text{if } z < -1\\
+\frac{1}{2} + \frac{3}{4}(z-\frac{1}{3}z^3) & \text{if } |z| \leq 1 \\
+1 & \text{if } z>1
+\end{cases}
+$$
+
+So we have the following:
+$$
+\hat{F}(x)=\frac{1}{N}\sum_{i=1}^NI\left(\frac{x-X_i}{h}\right)
+$$
+
+```{r}
+### Cumulative distribution of KDE
+I <- function(z){
+  result <- ifelse(abs(z) < 1, (1/2) + (3/4) * (z - (z^3)/3),
+                   ifelse(z < -1, 0, 1))
+
+}
+
+
+ CDF_hat <- function(x,beta_data, bandwidth){
+   N = length(beta_data)
+   (1/N)*sum(I((x-beta_data)/bandwidth))
+
+ }
+
+
+CDF_hat_vectorized <- Vectorize(CDF_hat,vectorize.args = "x")
+```
+
+In conclusion in order to find the quantile function of our KDE we invert (numerically speaking) the previous CDF expression. More specifically we found the zeros of $\hat{F}_h(x)-p=0$ and then define 
+
+$$\hat{F}_{h}^{-1}(p)=\bar{x} \Leftrightarrow \hat{F}_h(\bar{x})-p=0$$ 
+
+```{r}
+# Quantile function of KDE
+my_quantile <- function(p, beta_data, h) {
+  uniroot(function(x) CDF_hat_vectorized(x, beta_data, h) - p, interval = c(-2, 2))$root
+}
+
+my_quantile_vectorized = Vectorize(my_quantile,vectorize.args = "p")
+```
+
+## Part 2
+
+Now we pick two different pairs of $(\alpha,\beta)$, set the sample size $N$ and fix an arbitrarly bandwidth $h$ just for visualization purpose.
+```{r}
+# Parameters for the first beta distribution
+alpha1 <- 2
+beta1 <- 5
+
+# Parameters for the second beta distribution
+alpha2 <- 2
+beta2 <- 2
+
+# N sample size
+N = 100
+
+#bandwith for the KDE
+h = 0.1
+```
+
+We generate our sample data from the two different $Beta(\alpha,\beta)$ as population model.
+```{r}
+# Generate random sample of size N from a beta distribution
+set.seed(1234)
+beta_data1 <- rbeta(N, alpha1, beta1)
+beta_data2 <- rbeta(N,alpha2,beta2)
+```
+
+
+And then plot the density of the Betas and the one of our KDE.
+
+```{r plot_example, echo=FALSE, fig.width=10}
+# Plot Beta distribution and custom function using ggplot2
+plot_1 = ggplot(data.frame(x = seq(0, 1, length.out = 1000)), aes(x = x)) +
+  geom_line(aes(y = dbeta(x, alpha1, beta1)), color = 'blue', size = 0.8) +
+  labs(x = 'X-axis', y = 'Density', title = 'Overlay of KDE density on Beta(2,5)',
+       subtitle = paste("N =", N, ", h =", h)) +
+  stat_function(fun = function(x) f_estimator(x, beta_data1, bandwidth = h),
+                aes(color = 'KDE density'), size = 0.8) +
+  scale_color_manual(values = c('purple', 'blue')) +
+  #annotate("text", x = 0.8, y = 2.5, label = paste("N =", N, ", h =", h), color = "black", size = 5) +
+  theme_minimal() 
+
+
+plot_2 = ggplot(data.frame(x = seq(0, 1, length.out = 1000)), aes(x = x)) +
+  geom_line(aes(y = dbeta(x, alpha2, beta2)), color = 'blue', size = 0.8) +
+  labs(x = 'X-axis', y = 'Density', title = 'Overlay of KDE density on Beta(2,2)',
+       subtitle = paste("N =", N, ", h =", h)) +
+  stat_function(fun = function(x) f_estimator(x, beta_data2, bandwidth = h),
+                aes(color = 'KDE density'), size = 0.8) +
+  scale_color_manual(values = c('purple', 'blue')) +
+  #annotate("text", x = 0.8, y = 2.5, label = paste("N =", N, ", h =", h), color = "black", size = 5) +
+  theme_minimal() 
+
+grid.arrange(plot_1, plot_2, nrow = 2)
+```
+
+
+
+We also plot the respective CDF.
+
+```{r, echo=FALSE, fig.width=10, warning=FALSE}
+# Plot Beta distribution and custom function using ggplot2
+plot1 = ggplot(data.frame(x = seq(0, 1, length.out = 1000)), aes(x = x)) +
+  geom_line(aes(y = pbeta(x, alpha1, beta1)), color = 'blue', size = 0.8) +
+  labs(x = 'X-axis', y = 'Cumulative Distro', title = 'Overlay of KDE CDF on the cumulative of Beta(2,2)',
+       subtitle = paste("N =", N, ", h =", h)) +
+  stat_function(fun = function(x) CDF_hat_vectorized(x,beta_data1,h),
+                aes(color = 'KDE CDF'), size = 0.8) +
+  scale_color_manual(values = c('purple', 'blue')) +
+  annotate("text", x = 0.8, y = 2.5, label = paste("N =", N, ", h =", h), color = "black", size = 5) +
+  ylim(0,1) +
+  theme_minimal()
+
+
+plot2 = ggplot(data.frame(x = seq(0, 1, length.out = 1000)), aes(x = x)) +
+  geom_line(aes(y = pbeta(x, alpha2, beta2)), color = 'blue', size = 0.8) +
+  labs(x = 'X-axis', y = 'Cumulative Distro', title = 'Overlay of KDE CDF on the cumulative of Beta(2,5)',
+       subtitle = paste("N =", N, ", h =", h)) +
+  stat_function(fun = function(x) CDF_hat_vectorized(x,beta_data2,h),
+                aes(color = 'KDE CDF'), size = 0.8) +
+  scale_color_manual(values = c('purple', 'blue')) +
+  annotate("text", x = 0.8, y = 2.5, label = paste("N =", N, ", h =", h), color = "black", size = 5) +
+  ylim(0,1) +
+  theme_minimal()
+
+grid.arrange(plot1, plot2, nrow = 2)
+```
+
+And finally the overlay of the KDE quantiles on the beta ones.
+
+```{r, echo = FALSE, fig.width=10, warning=FALSE}
+# Plot Beta dquantiles and KDE quantile using ggplot2
+plot_1 = ggplot(data.frame(x = seq(0, 1, length.out = 1000)), aes(x = x)) +
+  geom_line(aes(y = qbeta(x, alpha1, beta1)), color = 'blue', size = 0.8) +
+  labs(x = 'X-axis', y = 'Quantile Functions', title = 'Overlay of quantile_estimator on Beta(2,5)',
+       subtitle = paste("N =", N, ", h =", h)) +
+  stat_function(fun = function(x) my_quantile_vectorized(x,beta_data1,h),
+                aes(color = 'KDE quantile'), size = 0.8) +
+  scale_color_manual(values = c('purple', 'blue')) +
+  annotate("text", x = 0.8, y = 2.5, label = paste("N =", N, ", h =", h), color = "black", size = 5) +
+  ylim(0,1) +
+  theme_minimal()
+
+plot_2 = ggplot(data.frame(x = seq(0, 1, length.out = 1000)), aes(x = x)) +
+  geom_line(aes(y = qbeta(x, alpha2, beta2)), color = 'blue', size = 0.8) +
+  labs(x = 'X-axis', y = 'Quantile Functions', title = 'Overlay of quantile_estimator on Beta(2,2)',
+       subtitle = paste("N =", N, ", h =", h)) +
+  stat_function(fun = function(x) my_quantile_vectorized(x,beta_data2,h),
+                aes(color = 'KDE quantile'), size = 0.8) +
+  scale_color_manual(values = c('purple', 'blue')) +
+  annotate("text", x = 0.8, y = 2.5, label = paste("N =", N, ", h =", h), color = "black", size = 5) +
+  ylim(0,1) +
+  theme_minimal()
+
+grid.arrange(plot_1, plot_2, nrow = 2)
+```
+
+Now we plot the Wasserstein metric with respect to the bandwidth $h$ values. Remember that in this case:
+
+- $N = 100$
+
+- $(\alpha1,\beta1)= (2,5)$
+
+- $(\alpha2,\beta2)= (2,2)$
+
+
+
+```{r, eval = FALSE}
+# Define the range of bandwidth values
+bandwidth_values <- seq(0.001, 1, by = 0.001)
+
+# Compute wasserstein values for different bandwidths (compute it once)
+wasserstein_values_1 <- vector()
+wasserstein_values_2 <- vector()
+for (j in 1:length(bandwidth_values)) {
+  bandwidth <- bandwidth_values[j]
+  wasserstein_values_1[j] <- compute_wasserstein_distance(alpha1, beta1, beta_data1, bandwidth)
+  wasserstein_values_2[j] <- compute_wasserstein_distance(alpha2, beta2, beta_data2, bandwidth)
+}
+```
+
+```{r, echo = FALSE, eval = FALSE}
+# Save wasserstein_values to a file
+save(wasserstein_values_1, file = "wasserstein_values_1.RData")
+save(wasserstein_values_2, file = "wasserstein_values_2.RData")
+```
+
+
+```{r load the data, echo = FALSE}
+load("wasserstein_values_1.RData")
+load("wasserstein_values_2.Rdata")
+```
+
+
+```{r, echo = FALSE, fig.width=10, warning=FALSE}
+# Define the range of bandwidth values
+bandwidth_values <- seq(0.001, 1, by = 0.001)
+
+# Plot Wasserstein Metric --------------------------------------------------
+
+# Create a data frame with bandwidth and Wasserstein values
+results_1 <- data.frame(
+  bandwidth = bandwidth_values,
+  wasserstein = wasserstein_values_1
+)
+
+# Plot using ggplot2
+plot_1 = ggplot(results_1, aes(x = bandwidth, y = wasserstein)) +
+  geom_line(color = "blue", size = 0.8) +
+  labs(x = "Bandwidth (h)", y = "Wasserstein Distance", title = "Wasserstein Distance vs. Bandwidth") +
+  theme_minimal() +
+  ylim(0, 0.25)
+
+
+
+results_2 <- data.frame(
+  bandwidth = bandwidth_values,
+  wasserstein = wasserstein_values_2
+)
+plot_2 = ggplot(results_2, aes(x = bandwidth, y = wasserstein)) +
+  geom_line(color = "blue", size = 0.8) +
+  labs(x = "Bandwidth (h)", y = "Wasserstein Distance", title = "Wasserstein Distance vs. Bandwidth") +
+  theme_minimal() +
+  ylim(0, 0.25)
+
+grid.arrange(plot_1, plot_2, nrow = 2)
+
+```
+As we can see the Wasserstein metric seems to exhibit a convex shape in both cases.
+This is reasonable if we remember the KDE expression $$\hat{f}_h(x)=\frac{1}{N}\sum_{i=1}^N{\frac{1}{h}k\left(\frac{x-X_i}{h}\right)}$$ 
+where $k(x)=\frac{3}{4}(1-x)^2\mathbb{1}_{[-1,1]}(x)$
+
+So:
+
+- for very large bandwith values, $\mathbb{1}_{[-1,1]}\left(\frac{x-X_i}{h}\right) = 1$ very often and so the KDE value at point $x$ will be the average of the samples, resulting in a very coarse approximation;
+
+- on the other hand for very small bandwith values, the KDE will be zero for almost every $x$, giving a  very coarse approximation too.
+
+
+
+
+In order to analyze the relation between $h$ and $\epsilon$, first of all we
+define a range of epsilon values, for each of them we find the coarsest $h$ and then
+make a plot.
+
+```{r, echo = FALSE, fig.width=10, warning=FALSE}
+# Define a range of epsilon values
+epsilon_values <- seq(0.04, 0.25, by = 0.01)  # Adjust as needed
+
+# Create empty vectors to store maximum bandwidth values for different epsilons
+max_bandwidth_values <- numeric(length(epsilon_values))
+
+# Loop through each epsilon value to find corresponding maximum bandwidth
+for (i in 1:length(epsilon_values)) {
+  epsilon <- epsilon_values[i]
+
+  # Find the maximum bandwidth below the current epsilon using precomputed wasserstein values
+  index_below_epsilon <- max(which(wasserstein_values_1 < epsilon))
+  max_bandwidth_values[i] <- bandwidth_values[index_below_epsilon]
+}
+
+# Combine epsilon and max_bandwidth values into a data frame
+epsilon_max_bandwidth <- data.frame(epsilon = epsilon_values, max_bandwidth = max_bandwidth_values)
+
+
+ggplot(epsilon_max_bandwidth, aes(x = epsilon, y = max_bandwidth)) +
+  geom_point(shape = 20, size = 3, color = "blue") +
+  geom_line(color = "red", size = 1) +
+  labs(x = "Epsilon", y = "Maximum Bandwidth (h)", title = "Maximum Bandwidth vs. Epsilon") +
+  theme_minimal()
+```
+
+As we can see $h$ is a non-decreasing function with respect to $\epsilon$. 
+In order to find a possible analitic relation between them, we can notice that the 
+Wasserstein metric seems to be quadratic with respect to $h$ and so we expect that
+the relation between $h$ and $\epsilon$ would be something like $h(\epsilon) \propto \sqrt{\epsilon}$.
+Let's try a linear regression between $h$ and the square root of $\epsilon$.
+
+```{r}
+# We define a model function of the form h(epsilon) = sqrt(k * epsilon)
+model <- lm(sqrt(max_bandwidth_values) ~ sqrt(epsilon_values))
+
+# Extract the coefficient (k) from the model
+k <- coef(model)[2] ^ 2
+
+# Extract RSE and F-statistic values from the linear model
+RSE <- summary(model)$sigma
+F_statistic <- summary(model)$fstatistic[1]
+```
+
+Here is the plot
+
+```{r, echo = FALSE, fig.width=10, warning=FALSE}
+# Create a data frame for square root of epsilon and square root of max bandwidth
+df <- data.frame(sqrt_epsilon = sqrt(epsilon_values), sqrt_max_bandwidth = max_bandwidth_values)
+
+
+ggplot(df, aes(x = sqrt_epsilon, y = sqrt_max_bandwidth)) +
+  geom_point(shape = 1, size = 3, color = "blue") +
+  geom_smooth(method = "lm", formula = y ~ x, color = "red", se = FALSE) +
+  labs(x = "Square Root of Epsilon", y = "Maximum Bandwidth (h)",
+       title = "Square Root of Max Bandwidth vs. Square Root of Epsilon") +
+    geom_text(aes(x = max(df$sqrt_epsilon), y = min(df$sqrt_max_bandwidth), 
+                label = paste("RSE =", round(RSE, 2), "\nF-statistic =", round(F_statistic, 2))),
+            color = "black", hjust = 1, vjust = 0, size = 4)+
+  theme_minimal()
+```
+As we can see: 
+
+1. The Residual Standard Error (RSE) that measures the standard deviation of the residuals (the differences between observed and predicted values) is low: this indicates better model fit;
+
+2. The F-statistic is very high. It indicates that the overall regression model is statistically significant. It suggests that there is strong evidence against the null hypothesis, indicating that the model as a whole provides a better explanation of the variance in the dependent variable compared to a model with no predictors.
+
+
+Let's conclude the homework observing that $N$ sample size has been fixed at $N=100$ during all the time.
+Now we give also a brief idea of the relation between the bandwidth $h$ and $N$ even if not explicitly requested.
+
+
+```{r, echo = FALSE, warning=FALSE}
+N_values <- c(10, 100, 1000)
+plots <- lapply(N_values, function(N) {
+  beta_sample <- rbeta(N, shape1 = 2, shape2 = 5)
+  ggplot(data.frame(x = seq(0, 1, length.out = 1000)), aes(x = x)) +
+    geom_line(aes(y = dbeta(x, 2, 5)), color = 'blue', size = 0.8) +
+    labs(x = 'X-axis', y = 'Density', title = paste("Overlay of KDE density on Beta(2,5) for N =", N)) +
+    stat_function(fun = function(x) f_estimator(x, beta_sample, bandwidth = 0.1),
+                  aes(color = 'KDE density'), size = 0.8) +
+    scale_color_manual(values = c('purple', 'blue')) +
+    theme_minimal()
+})
+
+# Arrange the plots
+grid.arrange(grobs = plots, nrow = 3)
+```
+
+As we could expect, increasing the sample size, the KDE fit better our target density.
+
+Now we compute the Wasserstein metric for each sample size. What we expect is that also the 
+metric will be smaller as the sample sizes increase.
+
+```{r, echo= FALSE, eval=FALSE}
+# Define the range of bandwidth values
+bandwidth_values <- seq(0.001, 0.5, by = 0.05)
+
+
+# Initialize a list to store Wasserstein values for different sample sizes
+wasserstein_values_list <- list()
+
+
+# Compute wasserstein values for different bandwidths and different sample sizes
+
+for (i in 1:length(N_values)){
+  wasserstein_values <- vector()
+  beta_data =  rbeta(N_values[i], shape1 = 2, shape2 = 5)
+  for (j in 1:length(bandwidth_values)) {
+  bandwidth <- bandwidth_values[j]
+  wasserstein_values[j] <- compute_wasserstein_distance(alpha1, beta1, beta_data, bandwidth)
+  }
+  # Store the vector of Wasserstein values for current sample size in the list
+  wasserstein_values_list[[as.character(N_values[i])]] <- wasserstein_values
+}
+```
+
+
+```{r, echo = FALSE, eval = FALSE}
+# Save wasserstein_values for each sample size to a file
+save(wasserstein_values_list, file = "wasserstein_values_list.RData")
+```
+
+
+```{r load the data list, echo = FALSE}
+load("wasserstein_values_list.RData")
+```
+
+And in fact that's what we get.
+
+```{r, warning = FALSE, echo= FALSE, fig.width=10}
+# Define the range of bandwidth values
+bandwidth_values <- seq(0.001, 0.5, by = 0.05)
+
+# Create a data frame for ggplot
+data <- data.frame(
+  Bandwidth = rep(bandwidth_values, times = 3),
+  Wasserstein = c(wasserstein_values_list[["10"]], wasserstein_values_list[["100"]], wasserstein_values_list[["1000"]]),
+  SampleSize = factor(rep(c("10", "100", "1000"), each = length(bandwidth_values)))
+)
+
+# Plot using ggplot2
+ggplot(data, aes(x = Bandwidth, y = Wasserstein, color = SampleSize)) +
+  geom_line() +
+  labs(
+    x = "Bandwidth",
+    y = "Wasserstein Metric",
+    title = "Wasserstein Curves for Different Sample Sizes"
+  ) +
+  xlim(0,0.35)+
+  ylim(0, 0.08) +  # Set y-axis limits
+  scale_color_manual(values = c("blue", "red", "green")) +  # Set colors
+  theme_minimal() +
+  theme(legend.position = "top")  # Adjust legend position
+```
+
+
+
+
+
+
+
+
+

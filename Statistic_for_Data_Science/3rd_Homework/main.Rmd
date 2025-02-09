@@ -1,0 +1,675 @@
+---
+title: "SDS-HW3"
+author: "Gabriele Volzone, Francesco Proietti, Francesco Lazzari"
+date: "Winter Semester 2023"
+output: 
+  html_document: 
+    theme: journal
+    toc: yes
+    toc_float:
+      collapsed: yes
+  html_notebook: 
+    toc: yes
+# runtime: shiny
+---
+
+```{=html}
+<style>
+body {
+  text-align: justify;
+}
+.shiny-frame{
+  width: 850px;
+  height: 600px;
+}
+</style>
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Requred packages
+
+```{r libraries, echo = TRUE, message = FALSE}
+# Cleaning of the workspace
+rm(list = ls())
+
+# Install the required packages
+if (!requireNamespace("knitr", quietly = TRUE)) {
+  install.packages("knitr")
+}
+if (!requireNamespace("zoo", quietly = TRUE)) {
+  install.packages("zoo")
+}
+if (!requireNamespace("fImport", quietly = TRUE)) {
+  install.packages("fImport")
+}
+if (!requireNamespace("quantmod", quietly = TRUE)) {
+  install.packages("quantmod")
+}
+if (!requireNamespace("dplyr", quietly = TRUE)) {
+  install.packages("dplyr")
+}
+if (!requireNamespace("igraph", quietly = TRUE)) {
+  install.packages("igraph")
+}
+if (!requireNamespace("chron", quietly = TRUE)) {
+  install.packages("chron")
+}
+if (!requireNamespace("boot", quietly = TRUE)) {
+  install.packages("boot")
+}
+if (!requireNamespace("BatchGetSymbols", quietly = TRUE)) {
+  install.packages("BatchGetSymbols")
+}
+if (!requireNamespace("network", quietly = TRUE)) {
+  install.packages("network")
+}
+if (!requireNamespace("GGally", quietly = TRUE)) {
+  install.packages("GGally")
+}
+if (!requireNamespace("sna", quietly = TRUE)) {
+  install.packages("sna")
+}
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+if (!requireNamespace("corrplot", quietly = TRUE)) {
+  install.packages("corrplot")
+}
+if (!requireNamespace("gridExtra", quietly = TRUE)) {
+  install.packages("gridExtra")
+}
+
+# Load the required packages
+library(knitr)
+library(zoo)
+library(fImport)
+library(quantmod)
+library(dplyr)
+library(igraph)
+library(chron)
+library(boot)
+library(BatchGetSymbols)
+library(network)
+library(GGally)
+library(sna)
+library(ggplot2)
+library(corrplot)
+library(gridExtra)
+
+
+# Import the custom functions we will use 
+source("functions.R")
+
+# Set seed for reproducibility
+set.seed(123)
+
+# 
+suppressMessages(require(tseries, quietly = TRUE))
+options('getSymbols.warning4.0' = FALSE)
+
+```
+
+# Introductory
+
+In this game there are three players: *Antwohnette (A)*, *BadelPadel (B)* and *Chumbawamba (C)*. The following table shows their working-hours:
+
+```{r Introductory table, echo = FALSE, results = 'asis'}
+
+# Format introductory working hours table
+A <- c('A', 'Antwohnette', '14:00-17:00')
+B <- c('B', 'BadellPadel', '11:00-16:00')
+C <- c('C', 'Chumbawamba', '9:00-13:00')
+table <- array(c(A,B,C), dim = c(3,3))
+table <- t(table)
+
+kable(table, caption = 'Working-hours', col.names = c('Player symbol', 'Name', 'Working-hours'))
+
+```
+
+The value of the characteristic function of a generic coalition $T$ is given by:
+
+\begin{equation}
+\nu(T)=\{\text{# of hours potentially saved by well organized coalition}\}
+\end{equation}
+
+Clearly $\nu(A)=\nu(B)=\nu(C)=0$ and $\nu(ABC)=4$. So the goal of this first part is to complete the definition of $\nu$ and to find Shapley.\
+
+In order to complete the definition of $\nu$ we have to calculate $\nu(AB)$, $\nu(BC)$ and $\nu(AC)$. Then we can make a table indicating the player's "marginal contribution" according to the order of appearance in the coalition. The marginal contribution is defined as:
+
+\begin{equation}
+\Delta^G_\pi(j)=\nu(S_\pi(j) \cup \{j\})-\nu(S_\pi(j))
+\end{equation}
+
+where $j$ denotes the agent, $\pi$ is a permutation and $G=(\boldsymbol{P},\nu)$ indicates the game. \
+
+Finally we can calculate the Shapley value of the generic player $P$, assuming that the permutations are all equally likely, in this way:
+
+\begin{equation}
+\psi(P)=\frac{\text{sum of all player's marginal contributions}}{\text{# of permutations}}
+\end{equation}
+
+```{r Permutations, echo = TRUE, results = FALSE}
+
+# Working hours
+A <- c(14, 15, 16, 17)
+B <- c(11, 12, 13, 14, 15, 16)
+C <- c(9, 10, 11, 12, 13)
+
+# Definition of the characteristic function
+n_A <- 0
+n_B <- 0
+n_C <- 0
+n_ABC <- 4
+
+# Find n_AB
+n_AB <- ifelse(length(intersect(A,B)) > 0, length(intersect(A,B)) - 1, 0)
+
+# Find n_AC
+n_AC <- ifelse(length(intersect(A,C)) > 0, length(intersect(A,C)) - 1, 0)
+
+# Find n_BC
+n_BC <- ifelse(length(intersect(B,C)) > 0, length(intersect(B,C)) - 1, 0)
+
+# Calculate element of table
+ABC <- c(n_A, (n_AB-n_A), (n_ABC-n_AB))
+ACB <- c(n_A, (n_ABC-n_AC), (n_AC-n_A))
+BAC <- c((n_AB-n_B), n_B, (n_ABC-n_AB))
+BCA <- c((n_ABC-n_BC), n_B, (n_BC-n_B))
+CAB <- c((n_AC-n_C), (n_ABC-n_AC), n_C)
+CBA <- c((n_ABC-n_BC), (n_BC-n_C), n_C)
+
+# Matrix of previous vectors
+matr <- t(array(c(ABC, ACB, BAC, BCA, CAB, CBA), dim = c(3,6)))
+
+# Total values
+total_value_A <- sum(matr[,1])
+total_value_B <- sum(matr[,2])
+total_value_C <- sum(matr[,3])
+
+# Shapley values
+shapley_A <- total_value_A/6
+shapley_B <- total_value_B/6
+shapley_C <- total_value_C/6
+
+```
+
+```{r Permutations table, echo = FALSE, results = 'asis'}
+
+# Vectors of each player
+player_A <- c(matr[,1], total_value_A, shapley_A)
+player_B <- c(matr[,2], total_value_B, shapley_B)
+player_C <- c(matr[,3], total_value_C, shapley_C)
+
+# Rows names
+perm <- c('ABC', 'ACB', 'BAC', 'BCA', 'CAB', 'CBA', 'TOTAL VALUE', 'SHAPLEY VALUE')
+
+# Visualize table
+table <- array(c(perm, player_A, player_B, player_C), dim = c(8,4))
+
+kable(table, caption = 'Marginal contributions', col.names = c('Permutation', 'Player A', 'Player B', 'Player C'))
+
+```
+
+We found that $\nu(AB)=`r n_AB`$, $\nu(BC)=`r n_BC`$, $\nu(AC)=`r n_AC`$.
+The players' Shapley values are: $\psi(A)=`r shapley_A`$, $\psi(B)=`r shapley_B`$ and $\psi(C)=`r shapley_C`$
+
+# Statistical
+
+## X matrix creation
+
+In this part we have to create the matrix $X$, which is a portfolio of $p$ stocks from the **S&P500** index, defined as follows:
+
+\begin{equation}
+X = [x_{t,j}]_{t,j}
+\end{equation}
+
+with time on the rows and stocks on the columns. The element x_{t,j} is the log-return given by:
+
+\begin{equation}
+x_{t,j}=\log \left( \frac{c_{t,j}}{c_{t-1,j}} \right)
+\end{equation}
+
+where $c_{t,j}$ denotes the closing price of the stock $j$ on day $t$. To create such matrix we have to get financial data, we chose to use the `get.hist.quote` function from the `tseries` package, downloading data from yahoo in the period between *2020-01-01* and *2023-12-31*. 
+
+In order to have a cleaner code we created some custom functions stored in a support file called `functions.R`.
+
+### `stocks.filter` Function
+
+First we downloaded the financial data of the **S&P500** companies. We can get the symbols and the CIGS sector of that companies using the `GetSP500Stocks` function of the `BatchGetSymbols` package. The symbols are fundamental to obtain the financial data, but some of them return an error while downloading (if they contain a dot in the symbols), moreover for some companies there aren't data for all days in which the exchange is open. 
+
+To handle these errors we wrote the `stocks.filter` function that takes as input the S&P500 info data and returns all the companies symbols which contain a dot or not have a complete dataset. To identify all the date in which the exchange is open, we chose to use as standard calendar the dates of a company as Apple, because we assumed that, due to the company's importance, it would not have missing data.
+
+```{r Stocks filter, echo = TRUE}
+
+# This function gets info about companies of S&P500
+s_p500 <- GetSP500Stocks()
+
+# We use our custom function 'stocks.filter' in order to find the companies that: 
+#  - returns an error while downloading data from yahoo 
+#  - have not all the data available for the time frame of our interest, which 
+#    goes from 2020-01-01 to 2023-12-31
+symbols_to_delete <- stocks.filter(s_p500$Tickers)
+
+# Remove such companies
+s_p500 <- s_p500[!s_p500$Tickers %in% symbols_to_delete,]
+
+```
+
+The s_p500 variable looks like this, we are interested mainly on the Tickers and SEC.filings columns.
+
+```{r SP500 table, echo = FALSE, results = 'asis'}
+# Print an example of the data into the S&P500 matrix
+kable(head(s_p500), format = "markdown")
+
+```
+
+### `get.sectors` Function
+
+In order to observe the number of stocks per each GIGS sector we wrote the `get.sectors` function which takes as input the S&P500 info data and returns a table with desired information.
+
+```{r Sector table, results = 'asis'}
+# Now we want to observe how many stocks are in each sector
+# In order to do this we use our custom function 'get.sectors'
+
+# NOTE:  -  the argument of this functions must necessary be the S&P500 object
+#        -  the argument has already been filtered, so the count only reflects 
+#           the number of stocks per sector that meet the specified criteria
+table <- get.sectors(s_p500)
+
+# Print the table 
+kable(data.frame(Sectors = names(table), Stocks = as.numeric(table)), format = "markdown")
+
+```
+
+
+### `stocks.matrix` Function
+
+Now in order to create the $X$ matrix of the stock portfolio we used the `stocks.matrix` function which takes as input a vector and the S&P500 info data. 
+
+The vector must has length eleven, as we will see we identified eleven different sectors, and it must contains the number of stocks per sector that we want; then a sample will be made. 
+
+To compute the matrix elements we assumed that the closing price of the previous day ($c_{t-1,j}$) is the earlier closing price available: for example, if we are computing the element of a Monday, we use as earlier closing price the value of Friday, because the exchange is close on week-end. The extraction of this data was automated with the `stock.data` function which takes as input a company's symbols and returns all the closing price from *2020-01-01* to *2023-12-31*.
+
+The `stocks.matrix` function returns the $X$ matrix, that has shape $T \times p$, where $T$ are all the days in which the exchange is open (according to Apple available data) and $p$ are the stocks in our portfolio.
+
+For this task we created two different matrix. The first has two stocks per sector from all the sectors, and the second has five stocks per sector, but only from five different sectors.
+
+```{r X matrices}
+# Now we want to create matrix X with the specified requirements
+# To create this matrix, we select a predefined number of random samples from each sector
+# We have automated the sampling process, data extraction, and processing using a function 
+#    we created called 'stock.matrix'
+
+# The first matrix was created using 2 random samples from 10 of the 11 sectors
+dim_1 <- c(rep(2,10),0)
+names(dim_1) <- names(table)
+
+X_1 <- stocks.matrix(dim_1, s_p500)
+
+# The second matrix was created using 5 random samples from only 5 of the available sectors
+dim_2 <- c(rep(5,4), rep(0, 7) )
+names(dim_2) <- names(table)
+
+X_2 <- stocks.matrix(dim_2, s_p500)
+
+```
+
+## Graph creation
+
+In this section, we have to create an undirected **Correlation graph** based on the previously created matrix $X$. This graph will have the $p$-stocks of the matrix as nodes and the correlation between each pair of nodes as edges. However, we will only include the edge if this correlation is significantly different from $0$ and if the intersection between the *confidence interval* and the interval $[-\tau, + \tau]$ is empty.
+
+$$ CI^{j_1 , j_2}(\alpha) \ \cap \ [-\tau, + \tau] = \emptyset \qquad \forall j_1 \neq j_2 \in \{1, ..., p \} \tag{1} $$
+
+To do this, first, we need to define a criterion with which we set the $\tau$ interval.
+
+### `find_tau` Function
+
+This function computes a threshold value `tau` ($\tau$) based on the correlation values between pairs of columns in the input dataframe. The threshold is set at the $p^{th}$ percentile of the absolute correlation values.
+
+The reasons why we chose to set the threshold at the $p^{th}$ percentile of the absolute correlation values are: 
+
+- using a percentile-based approach helps mitigate the influence of outliers in the correlation values; 
+
+- the percentile-based threshold is adaptable to the specific dataset being analyzed and this method does not rely on assuming a particular distribution of correlation values, making it robust and applicable to a wide range of datasets without strict assumptions about data distribution.
+
+We also noticed that, by changing the percentile to a smaller value,the number of correlations being significant non-zero increased, giving us also more information about the distribution of the correlation values 
+
+Overall, setting the threshold at the $p^{th}$ percentile of the absolute correlation values provides a balanced approach that accounts for the variability and characteristics of the data. 
+
+The identification of the threshold $\tau$ based on matrix $X$ has been automated through the dedicated function called `find.tau` whose code is contained and adequately documented in the support file `functions.R`.
+
+### Correlation matrix
+
+Once the criterion for selecting the `tau` interval is identified and the function to compute it is created, we proceed with the creation of the graph by generating the **correlation matrix**.
+
+This matrix differs from a standard correlation matrix in that, if condition $(1)$ is not met, the correlation between those nodes is automatically set equal to $0$.
+
+The creation of this matrix, with the respective checks for condition $(1)$, has been automated in the `corr.matrix` function, which internally calls the previous `find.tau` function. Again, the code for this is contained and adequately documented in the support file `functions.R`.
+
+In the creation of the graph, we also utilized the **Bonferroni correction** on the chosen significance level, denoted as $\alpha$, to account for the multiplicity of tests conducted. This correction is crucial for controlling the Type I error probability when multiple hypotheses are tested simultaneously. Without this adjustment, the global alpha level would increase without any control over it.
+
+The Bonferroni correction addresses this issue by lowering the threshold for significance for each individual test. It divides the desired significance level, $\alpha$, by the number of tests performed (in our function denoted as $p$), thus setting a more stringent criterion for significance at $\alpha/p$. This adjustment helps maintain the overall probability of Type I error at or below the specified level across all tests. A global $\alpha$ level means that if one correlation in the graph is really non statistically significant then we detect it correctly in $(1-\alpha) \%$ of cases.
+
+We also conducted an analysis of the edges within the graph, focusing on the relationship between  edges between nodes belonging to the same sector (intra-sector edges) and nodes belonging to different sectors (inter-sector edges). This analysis aimed to provide insights into the understanding of how stocks within and across sectors interact within the network.
+We used a custom function `edge_analysis`, always contained and documented in the `functions.R` file.
+
+```{r Correlation matrix 1, fig.width=10, fig.height=10}
+# Extraction of the custom correlation matrix for the firs X-matrix using the custom `corr.matrix`
+c.matrix_1 <- corr.matrix(X_1, 0.05, 0.5)
+
+# Now we want to plot the correlation matrix
+corrplot(c.matrix_1, method = "number", order = "AOE", title = "Correlation Matrix of the X1 matrix")
+```
+
+
+```{r Graph 1, echo=FALSE, fig.width=10, fig.height=7}
+# Create a network object 'g1' from the correlation matrix 'c.matrix_1'
+g1 <- network(c.matrix_1, directed = FALSE)
+
+# Add to the nodes the attribute 'Sector:' containing the name of the sector of each node
+sectors1 <- character()  # Initialize an empty character vector to store the results
+
+for (i in 1:10) {
+  sectors1 <- c(sectors1, rep(names(table)[i], 2))
+}
+g1 %v% "Sector:" = sectors1
+
+
+# Plot the network 'g1' using the ggnet2 packages
+ggnet2(g1, mode="circle", alpha = 1 , size = 13, label = TRUE, edge.alpha = 1, edge.lty = "solid", 
+       color = "Sector:", palette = "Set3", legend.position = "bottom", node.shape = 16, layout.exp = 0.8) +
+  labs(title = "Marginal Correlation Graph of the X1 matrix")
+```
+
+```{r edge anlysis 1}
+# Extraction of analysis values using the custom `edge_analysis`
+results1 <- edge_analysis(g1, sectors1)
+
+# Print the results as a table
+kable(results1, caption = "Edge Analysis")
+
+
+```
+
+
+```{r Correlation matrix 2, fig.width=10, fig.height=10}
+# Extraction of the custom correlation matrix for the second X-matrix using the custom `corr.matrix`
+c.matrix_2 <- corr.matrix(X_2, 0.05, 0.50)
+
+# Now we want to plot the correlation matrix
+corrplot(c.matrix_2, method = "number", order = "AOE", title = "Correlation Matrix of the X2 matrix")
+```
+
+
+```{r Graph 2, echo=FALSE, fig.width=10, fig.height=7}
+# Create a network object 'g2' from the correlation matrix 'c.matrix_2'
+g2 <- network(c.matrix_2, directed = FALSE)
+
+# Add to the nodes the attribute 'Sector:' containing the name of the sector of each node
+sectors2 <- character()  # Initialize an empty character vector to store the results
+
+for (i in 1:4) {
+  sectors2 <- c(sectors2, rep(names(table)[i], 5))
+}
+g2 %v% "Sector:" = sectors2
+
+
+# Plot the network 'g1' using the ggnet2 packages
+ggnet2(g2,mode="circle", alpha = 1 , size = 13, label = TRUE, edge.alpha = 1, edge.lty = "solid", 
+       color = "Sector:", palette = "Set1", legend.position = "bottom", node.shape = 16, layout.exp = 0.8) +
+  labs(title = "Marginal Correlation Graph of the X2 matrix")
+
+```
+
+```{r edge anlysis 2}
+# Extraction of analysis values using the custom `edge_analysis`
+results2 <- edge_analysis(g2, sectors2)
+
+# Print the results as a table
+kable(results2, caption = "Edge Analysis")
+
+
+```
+
+Upon analyzing two graphs with identical node counts (20 nodes), we observed that the graphs have roughly the same edge count. However, what differs is the ratio between inter-sector and intra-sector edges. In the first matrix, given the low number of nodes for each sector, the number of intra-sector edges seems to be significantly lower. In contrast, in the second graph, we can see that with a more balanced number of nodes per sector, the number of intra-sector edges is almost equal to the inter-sector ones.
+
+These graphs were generated using the $50^{th}$ percentile as the threshold parameter, denoted as $\tau$. It's important to observe that when we decrease this percentile (thus excluding the lower range of values and lowering the threshold), the number of edges in the graph substantially increases, the opposite happens when we increase the threshold.
+
+For instance, let's consider the most recent graph but with varying values of $\tau$ and their corresponding edge analysis.
+
+```{r Correlation matrix 2.1, echo=FALSE}
+# Extraction of the custom correlation matrix for the X-matrix using the custom `corr.matrix`
+c.matrix_2_1 <- corr.matrix(X_2, 0.05, 0.25)
+c.matrix_2_2 <- corr.matrix(X_2, 0.05, 0.75)
+
+# Create a network object 'g2' from the correlation matrix 'c.matrix_2'
+g2_1 <- network(c.matrix_2_1, directed = FALSE)
+g2_2 <- network(c.matrix_2_2, directed = FALSE)
+
+# Add to the nodes the attribute 'Sector:' containing the name of the sector of each node
+sectors2 <- character()  # Initialize an empty character vector to store the results
+
+for (i in 1:4) {
+  sectors2 <- c(sectors2, rep(names(table)[i], 5))
+}
+g2_1 %v% "Sector:" = sectors2
+g2_2 %v% "Sector:" = sectors2
+
+
+# Plot the network 
+ggnet2(g2_1,mode="circle", alpha = 1 , size = 13, label = TRUE, edge.alpha = 1, edge.lty = "solid", 
+       color = "Sector:", palette = "Set1", legend.position = "bottom", legend.size=7, node.shape = 16, layout.exp = 0.8) +
+  labs(title = "X2 matrix Graph (25th percentile)")
+
+results2_1 <- edge_analysis(g2_1, sectors2)
+
+# Print the results as a table
+kable(results2_1, caption = "Edge Analysis")
+
+# Plot the network 
+ggnet2(g2_2,mode="circle", alpha = 1 , size = 13, label = TRUE, edge.alpha = 1, edge.lty = "solid", 
+       color = "Sector:", palette = "Set1", legend.position = "bottom", legend.size=7, node.shape = 16, layout.exp = 0.8) +
+  labs(title = "X2 matrix Graph (75th percentile)")
+
+results2_2 <- edge_analysis(g2_2, sectors2)
+
+# Print the results as a table
+kable(results2_2, caption = "Edge Analysis")
+```
+
+These recent graphs indicate that when we consider higher correlations as significant, intra-sector edges predominantly remain. This observation suggests that although intra-sector edges are typically fewer in number compared to inter-sector edges, they exhibit higher correlation values. Consequently, when selecting two distinct stocks (nodes), there is a higher likelihood of correlation if they are from different sectors. However, if they are from the same sector, there is a higher probability of a stronger correlation. This conclusion can also be checked with the correlation matrix.
+
+
+
+## Bootstrapping the Shapley value 
+
+Given the matrix $X$ composed of $p$ stocks previously constructed, we define the **total utility** of the portfolio as the sum of the utilities of each stock $U_{\omega} (\sum_{j=i}^p X_j)$ where:
+
+$$ U_{\omega} (X) = \mathbb{E}(X) - \omega \mathbb{V}(X) \qquad \text{whith} \qquad \omega > 0 $$
+
+In this task, we need to estimate through bootstrapping the **average marginal contribution** of each stock to the total utility of the portfolio, namely the **Shapley value** defined as:
+
+$$ \psi(j) = \mathbb{E}(X_j) - \omega \left( \sum_{r=1}^p \mathbb{C}\text{ov} (X_j , X_r) \right) \tag{2}$$
+
+The coefficient $\omega$ represents a tradeoff parameter that determines the impact of the stock volatility (equal to the standard deviation) on the portfolio utility. Since increasing volatility implies increased stock riskiness, we decided to set this parameter from the perspective of a risk-averse agent. 
+
+This estimation of the Shapley value was conducted using the specific R function called `boot`. It requires as arguments the original data matrix $(X)$ from which various samples with repetition will be extracted (all having the same size as the original matrix), a supporting function for calculating the Shapley value, and the number of samples $B$. The supporting function must necessarily satisfy these two characteristics:
+
+- It must have the original data matrix as its first argument, which corresponds to the first argument of the boot function;
+
+- It must have a vector of position indices as its second argument. This vector will be passed by the boot function during each of the $B$ repetitions and will contain the row indices of the observations (relative to matrix $X$) of the sample extracted with repetition;
+
+- Any additional parameter after the first two mandatory ones must be individually passed to the boot function using its corresponding name.
+
+Given these conditions, the supporting function must calculate and return the estimation object of our analysis, namely the Shapley value for each of the $p$ stocks defined in equation (2) with a risk propensity coefficient $\omega$ In our case, this function is called `bootstrap_shapley`, and its code is located in the support file `functions.R`.
+
+For the execution of this task, we chose portfolio number $2$ composed of $5$ random stocks from the first $5$ sectors of the *GICS* in the *S&P500* index. To illustrate the effect of risk propensity on parameter estimation, we performed bootstrap analysis in all three cases: risk-seeking $(\omega = 0.5)$, risk-neutral $(\omega = 1)$, and risk-averse $(\omega = 1.5)$. 
+
+At the end of the table with the average marginal contribution, we included the total utility of the portfolio calculated by leveraging the *Efficiency* property of the Shapley value, which tells us that:
+
+$$ \sum_{j=1}^p \psi (j) = U_{\omega}(X)$$
+
+```{r Bootstrapping the Shapley value}
+# Number of bootstrap samples
+B <- 10000
+
+# Execution of the bootstrap using the 'boot' function and the custom 'booststrap_shapley' function increasing the risk propensity
+bootstrap_results <- boot(data = X_2, statistic = bootstrap_shapley, omega = 0.5 , R = B)
+bootstrap_results2 <- boot(data = X_2, statistic = bootstrap_shapley, omega = 1, R = B)
+bootstrap_results3 <- boot(data = X_2, statistic = bootstrap_shapley, omega = 1.5, R = B)
+
+# Extraction of the average bootstrapped Shapley value of each stock
+boot.shapley <- matrix(bootstrap_results$t0)
+boot.shapley <- cbind(boot.shapley, bootstrap_results2$t0 )
+boot.shapley <- cbind(boot.shapley, bootstrap_results3$t0 )
+
+# Add the row with the Total Utility of the portfolio
+# Note:  we know from the Efficiency property of the Shapley value that the total utility is equal to 
+#        the sum of the Shapley value of the p stocks
+boot.shapley <- rbind(boot.shapley, c( sum(bootstrap_results$t0), sum(bootstrap_results2$t0), sum(bootstrap_results3$t0) ) )
+
+# Use the name of the stock/Total Utility as index for the rows
+rownames(boot.shapley) <- c(colnames(X_2) , "Total Utility")
+
+# Print of the table
+kable(boot.shapley, caption = 'Bootstrapped Shapley value of each stock', col.names = c("Risk-seeking", "Risk-neutral", "Risk-averse") )
+```
+
+Subsequently, still through bootstrap, we calculated the *Confidence Interval* of the Shapley value for each stock and risk propensity. This estimation was also conducted using a specific R function called `boot.ci`. In this case, no supporting function is required. Instead, as first argument, an object of class *boot* is necessary, which contains the matrix of the $B$ estimations for each of the $p$ stocks. Subsequently, arguments such as the type of confidence interval, the $\alpha$ level of the interval and the column index representing the estimations of the $j$-th stock need to be passed.
+
+In our case, we set the level of Type I error to $0.05 / p $ (Bonferroni correction) and used the percentile confidence interval.
+
+```{r Bootstrap Confidence Intervals }
+# Calculation of the Confidence intervals of each bootstrapped Shapley value increasing the risk propensity
+ci_results <- sapply( 1:dim(X_2)[2], function(j) { 
+              boot_ci <- boot.ci(bootstrap_results, conf = 1-(0.05/20), type = "perc", index = j)$perc
+              return( c(boot_ci[4], boot_ci[5]) ) } )
+
+ci_results2 <- sapply( 1:dim(X_2)[2], function(j) { 
+              boot_ci <- boot.ci(bootstrap_results2, conf = 1-(0.05/20), type = "perc", index = j)$perc
+              return( c(boot_ci[4], boot_ci[5]) ) } )
+
+ci_results3 <- sapply( 1:dim(X_2)[2], function(j) { 
+              boot_ci <- boot.ci(bootstrap_results3, conf = 1-(0.05/20), type = "perc", index = j)$perc
+              return( c(boot_ci[4], boot_ci[5]) ) } )
+
+# Transpose the results
+ci_results <- t(ci_results)
+ci_results2 <- t(ci_results2)
+ci_results3 <- t(ci_results3)
+
+# Table union
+ci_total <- cbind(ci_results, ci_results2, ci_results3)
+
+# Add the name of the stock to each CI lower/upper bound 
+rownames(ci_total) <- colnames(X_2)
+
+# Visualize the CI for each stock
+kable(ci_total, caption = 'Bootstrapped CI - Lower & Upper Bounds of each stock', col.names = c('Risk-seeking LB', 'Risk-seeking UB', 'Risk-neutral LB', 'Risk-neutral UB', 'Risk-averse LB', 'Risk-averse UB'))
+
+```
+
+Now lets plot the Confidence Interval for each stock.
+
+```{r CI Plot, echo=FALSE, fig.width=10, fig.height=10, warning=FALSE}
+# Calculate the average Shapley value
+# Note: avg Shapley value != avg marginal contribution (Shapley value)
+#       It would be the marginal contribution in the case where all stocks contributed equally
+#       
+avg.utility <- mean(bootstrap_results$t0)
+
+# Create a dataframe with data for the graph
+ci_data <- data.frame(stock = rownames(ci_total),
+                      shapley = bootstrap_results$t0,
+                      Lower = ci_results[,1],
+                      Upper = ci_results[,2])
+
+# Plot the CIs
+p1 <- ggplot(data = ci_data, aes(x = stock, y = shapley)) +
+      geom_point( size = 2) +
+      geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.4, color = "black") +
+      geom_hline(aes(yintercept = avg.utility, linetype = "dashed"), color = "red") +
+      scale_linetype_manual(name = NULL, values = "dashed", labels = "Average Shapley value") +
+      geom_label( aes(x=2, y=-0.011, label="Risk-seeking"), color="black", size=5) +
+      labs(x = "Stock",
+           y = "Shapley Value") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+            legend.position = c(0.87, 0.18),
+            legend.box.background = element_rect(fill = "#F0F0F080", color = "gray", size = 0.5),
+            legend.key.size = unit(2, "lines"),
+            legend.margin = margin(r = 20, l = 15, b = 5),
+            legend.key.width = unit(2, "lines"))
+
+# ----
+
+avg.utility2 <- mean(bootstrap_results2$t0)
+
+# Create a dataframe with data for the graph
+ci_data2 <- data.frame(stock = rownames(ci_total),
+                      shapley = bootstrap_results2$t0,
+                      Lower = ci_results2[,1],
+                      Upper = ci_results2[,2])
+
+# Plot the CIs
+p2 <- ggplot(data = ci_data2, aes(x = stock, y = shapley)) +
+      geom_point( size = 2) +
+      geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.4, color = "black") +
+      geom_hline(aes(yintercept = avg.utility2, linetype = "dashed"), color = "red") +
+      scale_linetype_manual(name = NULL, values = "dashed", labels = "Average Shapley value") +
+      geom_label( aes(x=2, y=-0.016, label="Risk-neutral"), color="black", size=5) +
+      labs(x = "Stock",
+           y = "Shapley Value") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+            legend.position = c(0.87, 0.18),
+            legend.box.background = element_rect(fill = "#F0F0F080", color = "gray", size = 0.5),
+            legend.key.size = unit(2, "lines"),
+            legend.margin = margin(r = 20, l = 15, b = 5),
+            legend.key.width = unit(2, "lines"))
+
+# ------
+
+avg.utility3 <- mean(bootstrap_results3$t0)
+
+# Create a dataframe with data for the graph
+ci_data3 <- data.frame(stock = rownames(ci_total),
+                      shapley = bootstrap_results3$t0,
+                      Lower = ci_results3[,1],
+                      Upper = ci_results3[,2])
+
+# Plot the CIs
+p3 <- ggplot(data = ci_data3, aes(x = stock, y = shapley)) +
+      geom_point( size = 2) +
+      geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.4, color = "black") +
+      geom_hline(aes(yintercept = avg.utility3, linetype = "dashed"), color = "red") +
+      scale_linetype_manual(name = NULL, values = "dashed", labels = "Average Shapley value") +
+      geom_label( aes(x=2, y=-0.0225, label="Risk-averse"), color="black", size=5) +
+      labs(x = "Stock",
+           y = "Shapley Value") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+            legend.position = c(0.87, 0.18),
+            legend.box.background = element_rect(fill = "#F0F0F080", color = "gray", size = 0.5),
+            legend.key.size = unit(2, "lines"),
+            legend.margin = margin(r = 20, l = 15, b = 5),
+            legend.key.width = unit(2, "lines"))
+
+title <- "Shapley value Bootstrapped CI for ascending risk propensity"
+grid.arrange(p1, p2, p3, nrow = 3, top = title)
+
+```
+
+
+### Interpretation
+
+From the bootstrap results on the Shapley value, we can observe that in all three cases of risk propensity, the portfolio yields a negative utility to varying degrees. This phenomenon could be attributed to the global *COVID-19* pandemic that occurred during the data extraction period (from *2020-01-01* to *2023-12-31*), leading to a temporary recession in productive activities.
+
+From equation (2) we know that an increase in risk propensity leads to a higher influence of stock volatility. In this scenario, this resulted in increasing utility losses as the $\omega$ parameter increased.
+
+As expected, examining the confidence intervals, we can see that an increase in risk propensity corresponds to a general increase in Shapley value variability.
+
+

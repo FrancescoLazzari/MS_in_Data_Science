@@ -1,0 +1,661 @@
+---
+title: "SDS-HW2"
+author: "Lazzari - Mari"
+date: "Winter Semester 2023"
+output: 
+  rmarkdown::html_document:
+    theme: flatly
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+```{=html}
+<style>
+body {
+  text-align: justify;
+}
+.shiny-frame{
+  width: 850px;
+  height: 600px;
+}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Requred packages
+
+```{r}
+# Cleaning of the workspace
+rm(list = ls())
+
+# Install the required packages
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+if (!requireNamespace("reshape2", quietly = TRUE)) {
+  install.packages("reshape2")
+}
+
+# Load the required packages
+library(ggplot2)
+library(reshape2)
+
+```
+
+# Exercise 1
+
+## Definition of the problem
+
+From the theory we know that a $(1-\alpha)$ **Confidence Sequence** for the parameter $\mu$ is a sequence of Confidence Interval $\{ \bar{C}_t \}_{t=1}^{\infty}$  such that:
+
+$$\mathbb{P}(\exists \ t : \mu \notin \bar{C}_t ) \le \alpha$$
+
+So, given a sequence of IID observations $\{X_t\}_{t=1}^{\infty}= \{X_1, X_2, ... \}$ from a 1-sub-Gaussian distribution with mean $\mu=\mathbb{E}(X)$ then we can define the following $(1-\alpha)$ confidence sequence for $\mu$:
+
+$$  \bar{C}_t (X_t) = \left[ \frac{\sum_{i=1}^{t} X_i}{t} \pm 1.7 \cdot \sqrt{\frac{log \ log(2t) + 0.72 \ log(10.4/\alpha)}{t}} \ \right]  \tag{1} $$
+
+In addition we can define the following asymptotic CS at nominal level $1-\alpha$:
+
+$$ \bar{C}_t (X_t) = \left[ \frac{\sum_{i=1}^{t} X_i}{t} \pm \widehat{\sigma}^2_t \cdot 1.7 \cdot \sqrt{\frac{log \ log(2t) + 0.72 \ log(10.4/\alpha)}{t}} \ \right]  \tag{2}$$
+
+where $\widehat{\sigma}^2_t$ is the sample variance based on the first $t$ observations.
+
+---
+
+Our task is to choose two sub-Gaussian populations and compare, as $t$ varies, the performances of the two previous Confidence Sets with the repeated and improper use of the following Confidence Intervals (CIs):
+
+- **Gaussian CI**
+
+$$ \dot{C}_t( X_t)=\left[ \bar{X}_t \pm z_{1-\frac{\alpha}{2}}\frac{\sigma}{\sqrt{t}} \right]$$
+
+- **Hoeffding CI**
+
+$$\dot{C}_t (X_t) = \left[ \bar{X}_t \pm \sqrt{\frac{(b-a)^2}{t} \ ln \left(\frac{2}{\alpha}\right) } \ \right]$$
+
+- **Chebishev CI**
+
+$$ \dot{C}_t (X_t) = \left[ \bar{X}_t \pm \frac{\sigma}{\sqrt{\alpha \cdot t}} \right]$$
+
+## Metrics description
+
+In order to evaluate the performance of the CIs and the CSs as $t$ varies we considered the two following metrics:
+
+- The **Cumulative Miscoverage Probability** for the sample size $\bar{t}\leq t_{max}$ for a sequence of confidence intervals $\bar{C}_t$ for a learning target $\mu$ is defined as
+$$\mathbb{P} \left( \exists t \in [t_{min},\bar{t}] \quad | \quad \mu \not\in C_t \right)$$
+ i.e. the probability of the CS or CI failing to capture the true learning target at any time up to $\bar{t}$. The approach we followed in order to update the specific boolean value $CMP(k)$ for the $k-$th interval $C_{\bar{t}}^k$ is the following:
+
+$$
+\begin{cases}
+  \begin{aligned}
+    &\text{if $CMP(k)=\text{True}$ that is $\exists t \in [t_{min},\bar{t}-1] \quad | \quad \mu \not\in C_t^k$} : \text{then $CMP(k)=\text{True}$} \\
+    &\text{else, that is up to now $\forall t \in [t_{min},\bar{t}-1] \quad \mu \in C_t^k$} : 
+    \begin{cases}
+    \begin{aligned}
+          &\text{if  }\mu \in C_{\bar{t}}^k: \text{then do nothing, that is $CMP(k)=\text{False}$} \\
+          &\text{else: update $CMP(k)$ from False to True}
+    \end{aligned}
+    \end{cases}
+  \end{aligned}
+\end{cases}
+$$
+
+- The **Running Interval Length** for the sample size $\bar{t}\leq t_{max}$ or a sequence of confidence intervals $\bar{C}_t$ is defined as
+$$ L = U(X_t) - L(X_t)$$
+i.e. the difference between the upper and lower bounds of the confidence interval.
+
+## Experiment description
+
+In order to approximate the values of the two metrics above, we conducted simulations using the *Monte Carlo method* fixing the number of samples at $100$ (read the next section for the reason of this choice). For each of them, we sequentially added a new observation and recalculated the two previously described metrics at each sample size $t$. Once we obtained the results for each sample, we estimated the mean result.
+
+All these steps have been automated in the **Sequences** function we wrote, which requires the following input parameters:
+
+- *alpha* which indicates the Type I error rate;
+- *sample* which indicates, through a string, from which population we want to sample our data. The only accepted options are the strings "*Normal*" for a population distributed as a standard normal random variable and "*Rodemacher*" for the homonymous random variable;
+- *data* which indicates the matrix of observed data for each sample up to time $t-1$;
+- *results* which indicates a list containing the matrix of results for each metric;
+- *old_CMP* which indicates the Cumulative Miscoverage Probability matrix for each sample at time $t-1$.
+
+This function has been written to be called iteratively for each value of $t \in [t_{\text{min}}, t_{\text{max}}]$ so that it updates the various metrics with each call. For this purpose, it is necessary that the function returns the last three parameters so that they can be passed to the function itself in the next call.
+
+Below is the R code of the function containing detailed comments on the various steps followed.
+
+```{r}
+# Definition of the 'Sequences' function
+Sequences = function(alpha, sample, data, results, old_CMP){
+  
+  # ------------------------- LOCAL VARIABLES ----------------------------------
+
+  # Set the number of samples
+  # Since we define the number of samples in advance when initializing the 'data' matrix 
+  # we set this number equal to the number of columns in the 'data' matrix
+  N_Simulations = dim(data)[2]
+  
+  # Since we have only one population (Rademacher) with finite support {-1,1} 
+  # we set the variable 'N' as the difference between the maximum and minimum values of the support
+  # This variable will be used for the Hoeffding Confidence Interval
+  N = 2 
+  
+  # Set the real value for the population expected value
+  # Since our two populations have the same E(X) we don't need to separate the cases using the 'ifelse' function
+  real_mu = 0
+  
+  # ---------- INIZIALIZATION OF THE MATRIX FOR THE NEW RESULTS ----------------
+  
+  # Matrix for the Cumulative Miscoverage Probability for all the CIs & CSs
+  new_CMP = matrix(NA, N_Simulations, 5)
+  colnames(new_CMP) = c("Gaussian", "Hoeffding", "Chebishev", "CS1", "CS2")
+  
+  # Matrix for the Average Interval Length for all the CIs & CSs
+  new_AIL = matrix(NA, N_Simulations, 5)
+  colnames(new_AIL) = c("Gaussian", "Hoeffding", "Chebishev", "CS1", "CS2")
+  
+  # Matrix for the Sample Mean & Lower/Upper Bounds for all the CIs & CSs
+  new_Bounds = matrix(NA, N_Simulations, 11)
+  colnames(new_Bounds) = c( "Sample Mean" ,"Lower-Gaussian", "Upper-Gaussian", "Lower-Hoeffding", "Upper-Hoeffding", "Lower-Chebishev", "Upper-Chebishev", 'Lower-CS1', 'Upper-CS1', 'Lower-CS2', 'Upper-CS2')
+  
+  # ---------------- EXTRACTION OF A NEW OBSERVATION ---------------------------
+  
+  # Extraction of a new observation for each sample 
+  # We set the chosen population using the 'sample' parameter
+  
+  if(sample=="Normal"){
+    
+    new_sample = rnorm(N_Simulations, mean = 0, sd = 1)
+    
+  } else if(sample=="Rademacher"){
+    
+    new_sample = sample(c(-1, 1), size = N_Simulations, replace = TRUE)
+  }
+  
+  # Add the new observation at the previous data
+  updated_data = rbind(data, new_sample)
+  
+  # Count the value of 't' equal to the number of observation for each sample
+  # this value is equal to the number of rows in the 'updated_data' matrix
+  t = dim(updated_data)[1]
+  
+  # ---------------------- METRICS FOR EACH SAMPLE -----------------------------
+  
+  for (i in 1:N_Simulations) {
+    
+    # Extract the i-th sample from the 'updated_data' matrix
+    current_sample = updated_data[, i]
+    
+    # Calculate the mean of the i-th sample
+    sample_mean = mean(current_sample)
+
+    # Calculate the Standard-Deviation of the i-th sample
+    sample_sd = sd(current_sample)  # *((t-1)/t)
+    
+    # Calculate the Variance of the i-th sample
+    sample_var = sample_sd^2
+    
+    # ------------------------- LOWER & UPPER BOUNDS ---------------------------
+    
+    # Calculate the Lower & Upper Bounds for each CIs & CSs
+    
+    Gaussian = sample_mean + c(-1, 1) * qnorm(1 - alpha / 2) * sample_sd / sqrt(t)
+    Hoeffding = sample_mean + c(-1, 1) * sqrt(( N^2 / (t)) * log(2 / alpha))
+    Chebishev = sample_mean + c(-1, 1) * sample_sd / sqrt( t * alpha)
+    CS1 = sample_mean + c(-1, 1) * 1.7 * sqrt( ( log(log(2*t)) + 0.72*log(10.4/alpha) ) / t)
+    CS2 = sample_mean + c(-1, 1) * sample_var * 1.7 * sqrt( ( log(log(2*t)) + 0.72*log(10.4/alpha) ) / t)
+    
+    
+    # ---------------------------- MISCOVERAGE ---------------------------------
+    
+    # Checks if the various CIs & CSs contain the true parameter value 
+    # It returns False if it contains it and True if it does not 
+    # Note: we are checking miscoverage, not coverage, that's why True & False are inverted
+    
+    Gaussian_cmp = !(Gaussian[1] <= real_mu && Gaussian[2] >= real_mu)
+    Hoeffding_cmp = !(Hoeffding[1] <= real_mu && Hoeffding[2] >= real_mu)
+    Chebishev_cmp = !(Chebishev[1] <= real_mu && Chebishev[2] >= real_mu)
+    CS1_cmp = !(CS1[1] <= real_mu && CS1[2] >= real_mu)
+    CS2_cmp = !(CS2[1] <= real_mu && CS2[2] >= real_mu)
+    
+    # Merge the miscoverage for each CIs & CSs into a vector 
+    actual_cmp = c( Gaussian_cmp, Hoeffding_cmp, Chebishev_cmp, CS1_cmp, CS2_cmp )
+    
+    # Extract the previous miscoverage score for the i-th sample from the 'old_CMP'
+    # Note: the 'old_CMP' matrix has the sample for rows and the CI/CS scores for columns
+    old_cmp = old_CMP[i,]
+    
+    # Update the miscoverage scores comparing the new one with the previous one
+    # Note 1: we leave FALSE only if we obtained this value both now at the time 
+    #         't' and at the previous time 't-1'
+    # Note 2: if we sum the TRUE/FALSE scores the first is considered like 1 and 
+    #         the second is considered like 0 -> so the result can be a 2 
+    #         (TRUE+TRUE), a 1 (FALSE+TRUE or vice versa) or 0 (FALSE+FALSE) 
+    #         -> the >0 condition transform all the 1s & 2s into TRUE and leave 
+    #         the 0s as FALSE
+    
+    score = (old_cmp + actual_cmp) > 0
+    
+    # -------------------------- INTERVAL LENGTH -------------------------------
+    
+    # Calculate the Interval Length for each CIs & CSs
+    
+    Gaussian_len = Gaussian[2] - Gaussian[1]
+    Hoeffding_len = Hoeffding[2] - Hoeffding[1]
+    Chebishev_len = Chebishev[2] - Chebishev[1]
+    CS1_len = CS1[2] - CS1[1]
+    CS2_len = CS2[2] - CS2[1]
+  
+    # -------------------- NEW METRICS FOR THE SAMPLE --------------------------
+    
+    # Add the scores of each metric for each CIs & CSs to the respective new results matrix
+    # Note: each row contains the scores for one sample and each column contains 
+    #       the scores for one CI or CS
+    
+    new_CMP[i, ] = score
+    new_AIL[i, ] = c( Gaussian_len, Hoeffding_len, Chebishev_len, CS1_len, CS2_len )
+    new_Bounds[i, ] = c( sample_mean, Gaussian[1], Gaussian[2], Hoeffding[1], Hoeffding[2], Chebishev[1], Chebishev[2], CS1[1], CS1[2], CS2[1], CS2[2])
+  }
+  
+  # ------------------------- NEW METRICS SUMMARY ------------------------------
+  
+  # Calculate the mean of each metric score for each CIs or CSs
+  # Note: we obtain a single row containing the average score of each metric for each CI or CS
+  
+  stat_CMP = colMeans(new_CMP)
+  stat_AIL = colMeans(new_AIL)
+  stat_Bounds = colMeans(new_Bounds)
+  
+  # Add the new average metrics scores to the corrispondent results matrix
+  # Note: for convenience we have placed the three result matrix into a list called 'results'
+  #       -> to access each matrix we have to write 'results$metric'
+  
+  results$CMP = rbind(results$CMP, stat_CMP)
+  results$AIL = rbind(results$AIL, stat_AIL)
+  results$Bounds = rbind(results$Bounds, stat_Bounds)
+  
+  # Return the updated scores matrix, the updated observations for each sample 
+  # and the current miscoverage scores for each sample
+  return(list(results=results, data=updated_data, new_CMP = new_CMP))
+}
+
+```
+
+**Important note:** the advantage of having automated the experiment through iterative calls of the same function is the ability to stop and resume the experiment without losing data. Indeed, if the function is called $t$ times, it will add the respective $t$ observations to each sample and update the metrics with each call. However, if at a later time it is decided that the sample size is not sufficiently large, then, provided the outputs of the last function call are still saved, it is possible to resume the experiment simply with new iterative calls, unless this time we use as initial parameters the data already calculated previously.
+
+## Normal Samples
+
+Since a 1-sub Gaussian variable is a random variable that has tails at most as heavy as those of a normal random variable, we decided to use the latter as the first population for the experiment, as it represents what we assume to be a boundary case.
+
+Obviously, since this random variable does not have a limited support, it is not possible to calculate the Hoeffding confidence interval. However, for practical reasons, we decided to calculate it anyway (using the support width of the second population that we will use) because we deemed that adding specific conditions to treat the two cases would have unnecessarily burdened the function. So, simply removing those columns at the end of the execution seemed to us the quickest and computationally less burdensome solution.
+
+In order to avoid NaNs in the interval calculation when the sample size is equal to 1, we have decided to initialize each sample with 10 random observations.
+
+```{r eval=FALSE}
+# Set the seed for the reproducibility of the results
+set.seed(123)
+# Set the number of samples
+N_Simulations = 100
+# Initialize the 'data' matrix
+data = matrix(NA, 0, N_Simulations)
+# Add 10 starting observation for each sample
+for(i in 1:10){
+  # Extract the observation for each sample
+  default_data = rnorm(N_Simulations, mean = 0, sd = 1)
+  # Add one observation to each sample
+  data = rbind(data, default_data)
+}
+# Initialize the empty results list
+results = list()
+# Initialize the 'old_CMP' matrix setting FALSE for each sample 
+old_CMP = matrix(FALSE, N_Simulations, 5)
+```
+
+Once the variables to be passed as parameters of the Sequences function were initialized, we conducted the sequential experiment up to a maximum amplitude of $t_{\text{max}}=100,000$. Due to the high maximum sample size, we had to limit the number of samples to $100$ to keep the computational time under $6$ hours. Obviously, if one chooses to rerun the experiment with a lower $t_{\text{max}}$ value, it is advisable to increase the number of samples.
+
+```{r eval=FALSE}
+# Set the maximum number of observation we want to extract for each sample
+t_max = 1000
+# Execute 
+for (t in 1:t_max) {
+  # Save the outputs for the 't' sample size
+  output = Sequences(alpha=0.10, sample="Normal", data=data, results=results, old_CMP = old_CMP )
+  # Update the variables with the new results
+  data = output$data
+  results = output$results
+  old_CMP = output$new_CMP
+}
+
+# Save the final results into single variables
+cmp_data = results$CMP
+ail_data = results$AIL
+bounds_data = results$Bounds
+data = output$data
+last_CMP = output$new_CMP
+
+# Remove the Hoeffding CI 
+cmp_data = cmp_data[ , -2]
+ail_data = ail_data[ , -2]
+bounds_data = bounds_data[ , -c(4,5) ]
+last_CMP = last_CMP[ , -2]
+```
+
+```{r eval=TRUE, echo=FALSE}
+# Load the data obtained from the execution of the previous code
+load("NEW_Sample-Normal-100K-alpha010.RData")
+# Create a sequence of t values (sample size) ranging from 1 to t_max
+t_val = 1:t_max
+```
+
+---
+
+Firstly, we decided to look at the trend of the Cumulative Miscoverage Probability using a logarithmic scale for the sample sizes on the x-axis.
+
+From examining the graph below, it is clearly evident that the Gaussian CI leads to an overall cumulative error that far exceeds the alpha threshold. This result does not surprise us given the improper use that has been made of the CI. On the contrary, we did not expect that the Chebyshev CI would remain below the alpha threshold, even offering slightly better performance than CS2, which we recall was the asymptotic CSs (although we believe this difference to be almost negligible). Noteworthy is the behavior of CS1, which we remember to be the exact interval of the two CSs, which not only stays below the alpha level but even never exceeds the value of $0.01$.
+
+```{r eval=TRUE, echo=FALSE, fig.width=10, fig.height=7}
+# Transform the matrix with the results of the CMP into a DataFrame adding the 't_val' column
+# Transform the previous dataframe into a new DataFrame with a long format using the 'melt' function
+# The resulting DataFrame has three columns:
+# 1) 't_val'    -> repeat the t_val sequences for each CI or CS 
+# 2) 'variable' -> indicate the original column name (the first t_val rows will have the attribute "Gaussian" and so on)
+# 3) 'value'    -> contains the data that was in the previous DataFrame at the row identified by 't_val' and in the column identified by the attribute in 'variable'
+df = melt(data.frame(t_val, cmp_data), id.vars = "t_val")
+
+# Plot the Cumulative Miscoverage Probability using GGplot2
+ggplot(df, aes(x = t_val, y = value, color = variable)) +
+  geom_line() + 
+  geom_hline(yintercept = 0.1, color = "black", linetype = "dashed") +
+  scale_x_log10(breaks = c(10^1, 10^2,  10^3, 10^4, 10^5), 
+                labels = c(expression(10^1), expression(10^2), expression(10^3), expression(10^4), expression(10^5))) +
+  scale_y_continuous(breaks = seq(0, 0.95, 0.1)) + 
+  scale_color_manual(values = c("#CD0000", "blue", "#00CD66", "gold1")) + 
+  labs(x = "Log-Sample Size", y = "Cumulative Miscoverage Probability", color = "CI or CS:") + 
+  theme_minimal() + 
+    theme(legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold")) +
+  ggtitle(expression(paste("CMP scores for various CIs & CSs with ", alpha, "=0.1")))
+```
+
+Analyzing the trend of the Average Interval Length, we can find a first explanation for the previous results. From the graph below, it is clearly visible how the Gaussian CI has a significantly shorter average length compared to the other solutions. This inevitably leads to a higher frequency of miscoverage, further accentuated by the sequential experiment. It is curious how both CSs have a practically overlapping trend in AIL (Average Interval Length), although the two solutions do not guarantee the same performance. Again noteworthy is the Chebyshev CI, which presents a slightly lower AIL than that of CS2, although in the CMP (Cumulative Miscoverage Probability) both practically have the same performance (in reality, since Chebyshev up to $10^4$ has slightly better performance, we would have expected the CI to also have a slightly higher AIL, instead, we obtained the opposite).
+
+
+```{r eval=TRUE, echo=FALSE, fig.width=10, fig.height=7}
+# Transform the matrix with the results of the AIL into a DataFrame adding the 't_val' column
+# Transform the previous dataframe into a new DataFrame with a long format using the 'melt' function
+# The resulting DataFrame has three columns:
+# 1) 't_val'    -> repeat the t_val sequences for each CI or CS 
+# 2) 'variable' -> indicate the original column name (the first t_val rows will have the attribute "Gaussian" and so on)
+# 3) 'value'    -> contains the data that was in the previous DataFrame at the row identified by 't_val' and in the column identified by the attribute in 'variable'
+df2 = melt(data.frame(t_val, ail_data), id.vars = "t_val")
+
+# Plot the Average Running Interval Length using GGplot2
+ggplot(df2, aes(x = t_val, y = value, color = variable)) +
+  geom_line() + 
+  scale_x_log10(breaks = c(10^1, 10^2,  10^3, 10^4, 10^5), 
+                labels = c(expression(10^1), expression(10^2), expression(10^3), expression(10^4), expression(10^5))) +
+  scale_y_continuous(breaks = seq(0, 2, 0.2)) +
+  scale_color_manual(values = c("#CD0000", "blue", "#00CD66", "gold1")) + 
+  labs(x = "Log-Sample Size", y = "Average Running Interval Length", color = "CI or CS:") + 
+  theme_minimal() + 
+    theme(legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold")) +
+  ggtitle(expression(paste("AIL scores for various CIs & CSs with ", alpha, "=0.1"))) 
+```
+
+To better observe the trend of the various solutions, we decided to also represent the behavior of the lower and upper bounds. This doesn't give us much more information compared to the previous graph, although it makes it even more evident that as the number of observations increases, all the solutions converge around the true value of the parameter $\mu$, to the point of becoming indistinguishable.
+
+```{r eval=TRUE, echo=FALSE, fig.width=10, fig.height=7}
+# Transform the matrix with the results of the AIL into a DataFrame adding the 't_val' column
+# Transform the previous dataframe into a new DataFrame with a long format using the 'melt' function
+# The resulting DataFrame has three columns:
+# 1) 't_val'    -> repeat the t_val sequences for each CI or CS 
+# 2) 'variable' -> indicate the original column name (the first t_val rows will have the attribute "Gaussian" and so on)
+# 3) 'value'    -> contains the data that was in the previous DataFrame at the row identified by 't_val' and in the column identified by the attribute in 'variable'
+df3 = melt(data.frame(t_val, bounds_data), id.vars = "t_val")
+
+# Create a new variable that we can use to assign the same color for the Upper & Lower bounds of the same CI or CS
+color = c(rep("Sample Mean", t_max), rep("Gaussian", t_max*2), rep("Chebishev",t_max*2), rep("CS1",t_max*2), rep("CS2",t_max*2) )
+# Add the new colum at the DataFrame
+df3$color_group = color
+
+# Plot the Bounds for the various CIs & CSs
+ggplot(df3, aes(x = t_val, y = value, group = variable, color = color_group)) +
+  geom_line() + 
+  scale_x_log10(breaks = c(10^1, 10^2,  10^3, 10^4, 10^5), 
+                labels = c(expression(10^1), expression(10^2), expression(10^3), expression(10^4), expression(10^5))) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.2)) + 
+  scale_color_manual(values = c("blue", "#00CD66", "gold1", "#CD0000", "black")) +
+  labs(x = "Log-Sample Size", y = "Lower & Upper Bounds", color = "CI or CS:") +
+  theme_minimal() + 
+    theme(legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold")) +
+  ggtitle(expression(paste("Bounds for various CIs & CSs with ", alpha, "=0.1"))) 
+```
+
+
+## Rademacher Samples
+
+As the second population for sampling, we chose a Rademacher random variable, which is a uniform variable that takes the values $\{-1, 1\}$.
+
+In order to avoid NaNs in the interval calculation when the sample size is equal to 1, we have decided to initialize each sample with 10 random observations.
+
+```{r eval=FALSE}
+# Set the seed for the reproducibility of the results
+set.seed(123)
+# Set the number of samples
+N_Simulations = 100
+# Initialize the 'data' matrix
+data = matrix(NA, 0, N_Simulations)
+# Add 10 starting observation for each sample
+for(i in 1:10){
+  # Extract the observation for each sample
+  default_data =  sample(c(-1, 1), size = N_Simulations, replace = TRUE)
+  # Add one observation to each sample
+  data = rbind(data, default_data)
+}
+# Initialize the empty results list
+results = list()
+# Initialize the 'old_CMP' matrix setting FALSE for each sample 
+old_CMP = matrix(FALSE, N_Simulations, 5)
+```
+
+Once the variables to be passed as parameters of the Sequences function were initialized, we conducted the sequential experiment up to a maximum amplitude of $t_{\text{max}}=100,000$. Due to the high maximum sample size, we had to limit the number of samples to $100$ to keep the computational time under $6$ hours. Obviously, if one chooses to rerun the experiment with a lower $t_{\text{max}}$ value, it is advisable to increase the number of samples.
+
+```{r eval=FALSE}
+# Set the maximum number of observation we want to extract for each sample
+t_max = 100000
+for (t in 1:t_max) {
+  # Save the outputs for the 't' sample size
+  output = Sequences(alpha=0.10, sample="Rademacher", data=data, results=results, old_MCP = old_CMP )
+  # Update the variables with the new results
+  data = output$data
+  results = output$results
+  old_CMP = output$new_CMP
+}
+# Save the final results into single variables
+cmp_data = results$CMP
+ail_data = results$AIL
+bounds_data = results$Bounds
+data = output$data
+new_CMP = output$new_CMP
+```
+
+
+```{r eval=TRUE , echo=FALSE}
+# Load the data obtained from the execution of the previous code
+load("NEW_Sample-Rademacher-100K-alpha010.RData")
+# Create a sequence of t values (sample size) ranging from 1 to t_max
+t_val = 1:t_max
+```
+
+---
+
+Even with this population, the trend of the CMP for the Gaussian CI and the two CSs remains almost unchanged. However, the Chebyshev CI now slightly exceeds the nominal alpha threshold. This difference could be attributed to the fact that the previous population was the boundary case of a sub-Gaussian population. In light of this consideration, we suppose that the performance of the CIs worsens with the increase in the heaviness of the tails of the distribution (compared to a Gaussian distribution). In this case, it was also possible to observe the behavior of the Hoeffding CI, which has an almost identical progression to that of CS1 (the exact one), although it is a CI that should not be used for sequential experiments.
+
+```{r eval=TRUE, echo=FALSE, fig.width=10, fig.height=7}
+# Transform the matrix with the results of the CMP into a DataFrame adding the 't_val' column
+# Transform the previous dataframe into a new DataFrame with a long format using the 'melt' function
+# The resulting DataFrame has three columns:
+# 1) 't_val'    -> repeat the t_val sequences for each CI or CS 
+# 2) 'variable' -> indicate the original column name (the first t_val rows will have the attribute "Gaussian" and so on)
+# 3) 'value'    -> contains the data that was in the previous DataFrame at the row identified by 't_val' and in the column identified by the attribute in 'variable'
+df = melt(data.frame(t_val, cmp_data), id.vars = "t_val")
+
+# Plot the Cumulative Miscoverage Probability using GGplot2
+ggplot(df, aes(x = t_val, y = value, color = variable)) +
+  geom_line() + 
+  geom_hline(yintercept = 0.1, color = "black", linetype = "dashed") +
+  scale_x_log10(breaks = c(10^1, 10^2,  10^3, 10^4, 10^5), 
+                labels = c(expression(10^1), expression(10^2), expression(10^3), expression(10^4), expression(10^5))) +
+  scale_y_continuous(breaks = seq(0, 0.95, 0.1)) + 
+  scale_color_manual(values = c("#CD0000", "purple","blue", "#00CD66", "gold1")) + 
+  labs(x = "Log-Sample Size", y = "Cumulative Miscoverage Probability", color = "CI or CS:") + 
+  theme_minimal() + 
+    theme(legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold")) +
+  ggtitle(expression(paste("CMP scores for various CIs & CSs with ", alpha, "=0.1")))
+```
+
+Also in this case, the trend of the average interval lengths does not show marked differences compared to what was already observed with the standard normal population. The only addition is the presence of the Hoeffding CI, which shows a trend between that of Chebyshev and that of the two CSs, although it guarantees performance comparable to that of CS1 (only with a slightly shorter interval). In general, in light of this new result, we advance the obvious supposition that the better performance in terms of CMP of the CSs is attributable to the greater width of the intervals in the initial phases of the sampling.
+
+```{r eval=TRUE, echo=FALSE, fig.width=10, fig.height=7}
+# Transform the matrix with the results of the AIL into a DataFrame adding the 't_val' column
+# Transform the previous dataframe into a new DataFrame with a long format using the 'melt' function
+# The resulting DataFrame has three columns:
+# 1) 't_val'    -> repeat the t_val sequences for each CI or CS 
+# 2) 'variable' -> indicate the original column name (the first t_val rows will have the attribute "Gaussian" and so on)
+# 3) 'value'    -> contains the data that was in the previous DataFrame at the row identified by 't_val' and in the column identified by the attribute in 'variable'
+df2 = melt(data.frame(t_val, ail_data), id.vars = "t_val")
+
+# Plot the Average Running Interval Length using GGplot2
+ggplot(df2, aes(x = t_val, y = value, color = variable)) +
+  geom_line() + 
+  scale_x_log10(breaks = c(10^1, 10^2,  10^3, 10^4, 10^5), 
+                labels = c(expression(10^1), expression(10^2), expression(10^3), expression(10^4), expression(10^5))) +
+  scale_y_continuous(breaks = seq(0, 2, 0.2)) +
+  scale_color_manual(values = c("#CD0000", "purple","blue", "#00CD66", "gold1")) + 
+  labs(x = "Log-Sample Size", y = "Average Running Interval Length", color = "CI or CS:") + 
+  theme_minimal() + 
+    theme(legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold")) +
+  ggtitle(expression(paste("AIL scores for various CIs & CSs with ", alpha, "=0.1"))) 
+```
+
+Again, the trend of the lower and upper bounds shows us a convergence towards the true value of the parameter $\mu$ as the sample size increases, so much so that for very high values of $t$, the various solutions are no longer distinguishable.
+
+```{r eval=TRUE, echo=FALSE, fig.width=10, fig.height=7}
+# Transform the matrix with the results of the AIL into a DataFrame adding the 't_val' column
+# Transform the previous dataframe into a new DataFrame with a long format using the 'melt' function
+# The resulting DataFrame has three columns:
+# 1) 't_val'    -> repeat the t_val sequences for each CI or CS 
+# 2) 'variable' -> indicate the original column name (the first t_val rows will have the attribute "Gaussian" and so on)
+# 3) 'value'    -> contains the data that was in the previous DataFrame at the row identified by 't_val' and in the column identified by the attribute in 'variable'
+df3 = melt(data.frame(t_val, bounds_data), id.vars = "t_val")
+
+# Create a new variable that we can use to assign the same color for the Upper & Lower bounds of the same CI or CS
+color = c(rep("Sample Mean", t_max), rep("Gaussian", t_max*2), rep("Hoeffding", t_max*2), rep("Chebishev",t_max*2), rep("CS1",t_max*2), rep("CS2",t_max*2) )
+# Add the new colum at the DataFrame
+df3$color_group = color
+
+# Plot the Bounds for the various CIs & CSs
+ggplot(df3, aes(x = t_val, y = value, group = variable, color = color_group)) +
+  geom_line() + 
+  scale_x_log10(breaks = c(10^1, 10^2,  10^3, 10^4, 10^5), 
+                labels = c(expression(10^1), expression(10^2), expression(10^3), expression(10^4), expression(10^5))) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.2)) + 
+  scale_color_manual(values = c("blue", "#00CD66","gold1", "#CD0000", "purple", "black")) +
+  labs(x = "Log-Sample Size", y = "Lower & Upper Bounds", color = "CI or CS:") +
+  theme_minimal() + 
+    theme(legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold")) +
+  ggtitle(expression(paste("Bounds for various CIs & CSs with ", alpha, "=0.1"))) 
+```
+
+
+# Exercise 2
+
+## Environmental Sound Levels and Mood
+
+In this experiment we want to analyze the relation between different environmental sound levels and the mood. Let's specify the variables and the research question.
+
+## Variables
+
+1. The population $\ P$ will be all Stat4DS students in 2023-2024;
+
+2. The environmental sound will be produced by Noise Generator, a free Android application that produces white noise with different frequencies;
+
+3. The environmental sound level $\ nl$ will be measured thanks to NoiseCapture, a free and open-source Android application developped by two french research laboratories, the Environmental Acoustic Laboratory (Ifsttar) and the DECIDE team of the Lab-STICC (CNRS). It allows users to measure and share the noise environment giving a measure in dB of the detected noise;
+
+4. The mood $\ m$ will be computed by a self-report known as "The Positive and Negative Affect Schedule" (PANAS), that can be found in literature in "Watson, D., Clark, L. A., Tellegen, A. (1988). Development and validation of brief measures of positive and negative affect: The PANAS scales. Journal of Personality and Social Psychology, (54), 1063-1070." This self-report consists in 20 questions (10 for positive affect and 10 for negative affect) that must be answered with a number in the range from 1 to 5. The total score is calculated by finding the sum of the 10 positive items, and then the 10 negative items. Scores range from 10 -- 50 for both sets of items. We will focus on the negative score, meaning that a lower score (near 10-20) corresponds to a lower negative affect, while an higher score (near 40-50) corresponds to a higher negative affect.
+
+## Research Question
+
+Now that we specified the variables, we can formalize the research question. Since our aim is to verify whether the environmental sound and the everyday mood of Stat4DS students have a relation or not, we will proceed with a specific sequential hypothesis test for the Pearson correlation with type I error $\alpha = 0.05$, that is the sequential probability ratio test (SPRT) (for sequential hypothesis test, see Wald, Abraham (June 1945). "Sequential Tests of Statistical Hypotheses". Annals of Mathematical Statistics. 16 (2): 117--186.), that is 
+$$ 
+\begin{cases}
+  \begin{aligned}
+    H_0: & \ \rho = 0 \\
+    H_1: & \ \rho \neq 0
+  \end{aligned}
+\end{cases}
+$$ 
+ where $\rho$ is the Pearson correlation coefficient between the environmental sound level $\ nl$ and the mood $\ m$.
+
+The interpretation is trivial, that is null hypothesis $H_0$: No significant relationship between environmental noise and mood, alternative hypothesis $H_1$: A significant relationship between environmental noise and mood can not be excluded based on the data collected so far. We are going to add more details once we said what are the experimental assumptions and the sampling scheme.
+
+## Assumptions
+
+1. We assume to deal with random samples (iid) from the population $\ P$ (see the sampling scheme in the next paragraph);
+
+2. Since very low and very high levels of noise are less likely and on average the Environmental Sound Levels is in the range $[46dB-70dB]$ (see <https://soundproofingguide.com/decibels-level-comparison-chart/>), we will model the Environmental Sound Levels distribution as a $N(58,25)$;
+
+3. Since we're interested only in Environmental Noise, we'll assume that environmental noise worsens mood or, at best, does not change it, but certainly does not improve it. Hence we'll focus only on the negative score of the mood $\ m$ produced by the 10 negative items, that is a value in the range $[10,50]$ where $\ m = 10$ means "no negative affect at all" and $\ m = 50$ means "very very bad mood". We do not assume any distribution behind $\ m$.
+
+## Experiment scheme
+
+1.  At the beginning of the experiment we will assign a unique and fixed integer to all the person in population, so that $\ P = \{x_1,x_2,...,x_n\}$
+
+2. Then we will randomly sample one person per day from the population $\ P$, producing a pseudo-random integer $m \in \{1,2,...,n\}$, where $n$ is the Stat4DS class size, with R and picking the corresponding person $x_m$. The selection will be made at the same hour of the day (10 am) so that we can avoid considering (or better, control) the "hour of the day" as a confounder.
+
+3. Once we picked the "person of the day" $x_m$, we will put him/her in a room, then produce some noise by randomly sampling from a $N(58,25)$ and producing the corresponding noise in $dB$ and ask him/her to act normally for 15 minutes, doing what he/she normally does. After that he/she will compile the self-report.
+
+4. In conclusion we'll add the new couple (environmental sound level in $dB$, mood) in our database, that is a R matrix.
+
+## Mathematical formalization
+
+We chose the SPRT since we'll cumulate data sequentially and SPRT allows to decide a stopping rule that depends on the data without fixing a priori the sample size. Moreover we will not proceed with a classical hypothesis test since we will make the hypothesis test each time we collect new data, that is a multiple testing problem and we want to be sure that our test has a type I error $\alpha$ valid for the entire test. More in detail this is the hypothesis test 
+$$
+\begin{cases}
+  \begin{aligned}
+    H_0: & \ \rho = 0 \\
+    H_1: & \ \rho \neq 0
+  \end{aligned}
+\end{cases}
+$$ 
+
+Then next step of SPRT is to compute the cumulative sum of the log-likelihood ratio, $\log\Lambda_i$, as new data arrive with this procedure: 
+$$
+\begin{cases}
+  \begin{aligned}
+    S_0& = 0 \\
+    S_i& = S_{i-1}+\log\Lambda_i
+  \end{aligned}
+\end{cases}
+$$ 
+And then the stopping rule will be the following:
+$$
+\begin{cases}
+  \begin{aligned}
+    &a<S_i<b : \text{continue cumulate data} \\
+    &S_i\geq b : \text{reject $H_0$}\\
+    &S_i\leq a : \text{accept $H_0$}
+  \end{aligned}
+\end{cases}
+$$ 
+where where $a$ and $b$ (with $a<0<b)$ depend on the desired type I and type II errors, $\alpha$ and $\beta$. For example we may choose $a = \log(\frac{\beta}{1-\alpha})$ and $b = \log(\frac{1-\beta}{\alpha})$. In our particular case we will decide the likelihood ratio to be the ratio of the likelihood under the null hypothesis $H_0$ to the likelihood under the alternative hypothesis $H_1$, that for the Pearson correlation test would be $\Lambda_k = \frac{1}{\sqrt{1-\hat{\rho_k}^2}}$, where $\hat{\rho_k}=\frac{\sum_{i=1}^{k}(m_i-\bar{m})(nl-\bar{nl})}{\sqrt{\sum_{i=1}^{k}{(m_i-\bar{m})^2(nl-\bar{nl})^2}}}$ is the sample correlation coefficient (this expression was given by Chat-GPT 3.5 as answer to the query "Is there a sequencial probability ratio test for correlation between two variables? In that case explain me in details").
+
+## Remarks
+
+**Confidence Sequences** are linked with **sequential hypothesis test** since both of them are subjects of sequential analysis. As in classic statistics there is a bijection between confidence interval and hypothesis test, meaning that a level $\alpha$ test rejects $H_0 : \rho = \rho_0$ if and only if the $1-\alpha$ confidence interval does not include $\rho_0$, here we suppose the same bijection exists between the SPRT and its corresponding confidence sequence.
+
+In that case, we will use the corresponding CS rather than the SPRT, since they are often more informative than tests.
+
