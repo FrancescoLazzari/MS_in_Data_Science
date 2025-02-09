@@ -1,0 +1,725 @@
+---
+title: "Kaggle Entry"
+output: 
+  html_document:
+    df_print: kable
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+```
+
+# Exercise 1: Estimation of redshift from photometric colors  
+
+
+## Introduction  
+
+```{r ,eval=FALSE}
+#install.packages("KernSmooth")
+#install.packages("Metrics")
+#install.packages("readr")
+#install.packages('combinat')
+#install.packages("rlist")
+
+library(rlist)
+library(locfit)
+library(readr)
+library(Metrics)
+
+train = read.csv("/kaggle/input/statistical-learning-warm-up-hw01-2024/train.csv")
+test = read.csv("/kaggle/input/statistical-learning-warm-up-hw01-2024/test.csv")
+
+dstrain = data.frame(train)
+usabletrain = dstrain[2:7] # use just the columns that contain all the colors
+usabletrain = apply(usabletrain, 2, scale) # rescale (standardize each column)
+
+
+dstest = data.frame(test)
+usabletest = dstest[2:7] # use just the columns that contain all the colors
+usabletest = apply(usabletest, 2, scale) # rescale (standardize each column)
+
+
+lun = length(dstrain$id) # length of the train dataset
+p = ncol(usabletrain) # number of predictors
+
+y_bar = mean(dstrain$target) # mean response
+
+
+appx <- function(mfun, y, alpha) sum((y - alpha - rowSums(mfun))^2) # explicit 
+# rss computation
+
+```
+  
+  Implementation of the backfitting algorithm using local polynomial in a generalized additive model setup. The use of the "locfit" library allow us to implement the first part. 
+  
+```{r ,eval=FALSE}
+# Here we implement the backfitting algorithm
+
+newbackfit <- function(y, usable,ds,maxiter=1000,tol=0.001,nn,deg) {
+  
+  lun = length(ds$id)
+  p = ncol(usable)
+  y_bar = mean(ds$target) # mean response
+  
+  mfun = matrix(0, nrow = lun, ncol = p) # initialization on the M matrix that
+  # saves all the in-sample predictions
+  residuals = matrix(0, nrow = lun, ncol = p) # matrix of the residuals
+  rss_0 = appx(mfun,ds$target,y_bar) # first computation of the rss 
+  
+  cat("rss_0",rss_0)
+  rss=rss_0-0.01 # initialization of rss in order to be less than the rss_0-tolerance
+  models = list() # initialize a list of models that will be fitted on train data
+  
+  # In the tolerance / max iteration loop we implement the backfitting algorithm
+  # where the "locfit" library is used with local polynomial of different degrees (lp)
+  # Both nn (nearest neighbors) and deg (degree) are tuned at each iteration
+  # in the cross validation steps (see in the section below the corresponding function)
+  
+  for (w in 1:maxiter){
+    if(rss_0-rss>=tol){ # convergence conditions 
+      rss_0=rss # saving the current rss value in order to compare it to the next one
+      for (j in 1:p) {
+        
+        residuals[, j] <- y - (y_bar + apply(mfun[,-j],1,sum)) # compute the 
+        # residuals and save it in each column
+        et  = locfit(residuals[,j] ~ lp(usable[,j],nn = nn[j],deg = deg[j]),maxk =1e4)
+        # locfit gives an object of class "locfit, with all the parameters saved
+        mfun[, j] <- fitted(et) # the fitted values are the one saved in the 
+        # M matrix of in-sample predictions
+        mfun[, j] <- mfun[, j] - mean(mfun[, j]) # centralization 
+        models[[j]] = et # save the models in the list 
+        
+      }
+      rss=appx(mfun,ds$target,y_bar) # compute the rss 
+      cat("\nrss",appx(mfun,ds$target,y_bar)) # print the rss if needed
+    }
+  }
+  return(models) # return the list of models for future predictions
+}
+```
+
+```{r ,eval=FALSE}
+#Now for the cross validation step, where we use 5 folds
+
+cv=function(ds,usable,y, folds=5){
+  
+  set.seed(123)
+  lun=length(y)
+  p=ncol(usable)
+  
+  dst=matrix(0,nrow=lun-nrow(ds)/folds,ncol=ncol(ds)) #initialization of matrices
+  dsf=matrix(0,nrow=nrow(ds)/folds,ncol=ncol(ds))
+  
+  degseq=seq(0,3,by=1) # choose between polynomial of degree 0 to 3
+  hseq=seq(0.1,1,by=0.1) # choose between 0 to 1 for the nn parameter
+  
+  comb = as.matrix(expand.grid(degseq,hseq)) # matrix of combinations of degree
+  # and nn parameters
+  
+  bestrmse=matrix(10^4,nrow= folds,ncol = p) # initialization of parameters 
+  besth=matrix(0,nrow=folds,ncol=p)
+  bestdeg=matrix(0,nrow=folds,ncol=p)
+  
+  for (i in 1:folds){ 
+    
+    # start the k-fold cross validation
+    
+    dsf=ds[((lun/folds)*(i-1)+1):((lun/folds)*i),] # select from the dataset the
+    # rows of the fold 
+    
+    usablef=dsf[,2:7] #usable part of the fold
+
+    yf=dsf[,8] # single column of the target
+    y_bar=mean(yf) # mean response 
+    
+    # Here we have some "if" conditions on the folds and how the dataset should be split
+    # Let's see how: In the first case, from fold 2 to 4, the dst is the bind the
+    # "remaining" dataset not considering the fold, whereas in the second and 
+    # third case we consider from row 1500 to 7500 and 1 to 6000.
+    
+    if(i!=1 & i!=folds){
+      dst=rbind(ds[1:((lun/folds)*(i-1)),],ds[((lun/folds)*i+1):lun,])
+    }  
+    if (i==1){
+      dst=ds[((lun/folds)*i+1):lun,]
+    }
+    if (i==folds){
+      dst=ds[1:((lun/folds)*(i-1)),]
+    }
+    
+    usablet=dst[,2:7]
+    yt=dst[,8]
+  
+    
+    for (j in 1:p){ # for each predictor 
+      for (k in 1:length(comb[,1])){ #for each combination of nn and deg parameters
+        
+        # Since we're working with additive models, the value at which the parameters 
+        # of a single component are optimized don't depend on the value od the parameters
+        # of the other components. To avoid an almost infinite cycle of 6^14 iterations
+        # we computed the predictions changing only the two parameters of each single 
+        # component at a time, so that we would end up with the best parameters for 
+        # each component and each fold
+        
+        
+        degree = rep(0,p) # initialization
+        h = rep(0.1,p)
+        
+        degree[j] = comb[k,1] 
+        h[j] = comb[k,2]
+          
+        # here we do the backfit with the specified parameters
+        ret=newbackfit(yt,usablet,dst,maxiter=100,tol=0.001,nn = h,deg = degree) 
+        # we initialize the matrix of predictions
+        ypred=matrix(0,nrow=length(yf),ncol=ncol(usablef))
+        
+        # Now for each covariate we do the prediction using the usable part of the fold
+        
+        for (b in 1:6){
+          ypred[,b] = predict(ret[[b]],newdata = usablef[,b]) 
+        }
+        
+        # Here we add a check that can be useful for eventual NA in the ypredictions
+        # If necessary, all the elements are set to 0 in order to let the algorithm 
+        # work
+        
+        # print(apply(is.na(ypred),2,sum)) 
+        for(l in 1:length(yf)){
+          for (m in 1:ncol(usablef)){
+            if (is.na(ypred[l,m])){
+              ypred[l,m]=0
+            }
+          }
+        }
+        
+        # estimation of the rsme of the final model defined as the sum of each model,
+        # and even in this case a check for NA's is added
+        
+        rmse=rmse(yf,(apply(ypred,1,sum)+y_bar))
+        if (is.na(rmse)){
+          rmse=10^4
+        }
+        
+        #if the rmse is less than the bestrmse then we save the parameters for each fold
+        
+        if (rmse<bestrmse[i,j]){ # considering fold i and covariate j
+          besth[i,j]=comb[k,2]
+          bestdeg[i,j]=comb[k,1]
+          bestrmse[i,j]=rmse
+          
+        }
+      }
+    }
+    
+  }
+  return(rbind(besth,bestdeg,bestrmse))
+}
+
+# we then call cv and save the result
+
+```
+
+```{r, eval=FALSE}
+# run this function to get the best values  
+afold=cv(ds=dstrain,usable=usabletrain,y=dstrain$target) 
+```
+
+
+```{r ,eval=FALSE}
+# Prediction section
+
+# From a previous version of the cross-validation, which was global (all the components 
+# would have the same couple (nn,h)) as parameters obtained as optimal values nn = 0.5 and deg = 1 
+# (choosing those parameters between the 5 ones (one couple for each fold) that minimized the sum rmre among the folds)
+# We decided to run this model before actually looking at the model with different
+# parametres for each covariate
+
+# Global parameters
+
+nn_global = rep(0.5,6) # sub_3 in the submission history
+deg_global = rep(1,6)
+
+ret <- newbackfit(dstrain$target,usabletrain,dstrain,nn = nn_global, deg = deg_global)
+y1 = matrix(0, nrow = length(dstest$id), ncol = ncol(usabletest))
+
+for (i in 1:6){
+  y1[,i] = predict(ret[[i]],newdata = usabletest[,i])
+}
+
+# Final step, prediction on test data
+
+ypred_global=apply(y1,1,sum)+y_bar 
+pred_global=cbind(test$id,ypred_global)
+
+# For our first submission we opted for a global CV approach, where both nn and
+# degree were set to be equal for each model
+# In the new version we look for the best parameters for each model, since
+# each covariate can have different behaviors from the other one
+
+
+```
+
+```{r ,eval=FALSE}
+# Local parameters 
+# How do we choose the parameters?
+
+# We reordered the values in "afold" in this way: each column is a covariate and
+# every two rows he have a fold. So rows 1,3,5,7,9 are going to be 
+# the vectors of 6 nn values (1 for each component) for fold 1 to 5, and rows 
+# 2,4,6,8,10 the vectors of 6 deg values.
+
+# We then imported the csv
+aordered <- read_csv("/kaggle/input/aordered")
+aordered=aordered[,2:7]
+
+# To choose among these values, we decided to try each combinations of values for 
+# each component. We randomly split the train data in two datasets creating a validation set
+# consisting of 20% of the total rows. We then computed the mrse on the validation set
+# after having trained the model with the rest of the training set for each combination
+# of couples (nn,h) for all components. 
+
+i=sample(c(1:7500),1500) # sample from indexes of the rows
+
+ds = data.frame(train[-i,]) # select everything except the sampled rows
+
+usable = ds[2:7]
+usable = apply(usable, 2, scale) # rescale
+
+
+dsv = data.frame(train[i,]) # select the validation set
+
+usablev = dsv[2:7]
+usablev = apply(usablev, 2, scale) # rescale
+
+
+lun_val = length(ds$id) # length of the train dataset
+p = ncol(usable)
+yv = matrix(0, nrow = length(dsv$id), ncol = ncol(usablev))
+yv_bar = mean(ds$target)
+
+indexes = as.matrix(expand.grid(rep(list(1:5),6)))
+
+predictedval = rep(0,nrow(indexes))
+
+hv = rep(0,6)
+degv = rep(0,6)
+
+
+for (i in 1:nrow(indexes)){
+  cat("\nIteration number = ",i)
+  for (j in 1:p){
+    
+    hv[j] = aordered[((indexes[i,j]*2)-1),j] # give a combination of h for all component
+    degv[j] = aordered[(indexes[i,j]*2),j] # give the respective combination of deg for all component
+    
+  }
+  retv <- newbackfit(ds$target,usable,ds,nn = hv , deg = degv) 
+  for (t in 1:6){
+    yv[,t] = predict(retv[[t]],newdata = usablev[,t])
+  }
+  ypredv=apply(yv,1,sum)+yv_bar
+  predictedval[i] = rmse(dsv$target,ypredv)
+}
+
+
+idx = indexes[which.min(predictedval)] # sub_9 in the notebook, with the min of
+indexes[idx,]# our predicted values
+
+
+# from the indexes[idx,] we select the couple of parameters corresponding to the folds
+# in the selected index row, and then run the backfitting algorithm on the whole
+# training set, as we see below, in order to get the m functions from the theory
+
+                                    
+nn_final = c(0.8,0.2,0.2,0.3,0.2,1) # sub_9 parameters
+deg_final = c(1,1,0,3,1,3)
+
+
+ret_final <- newbackfit(dstrain$target,usabletrain,dstrain,nn = nn_final, deg = deg_final)
+y_final = matrix(0, nrow = length(dstest$id), ncol = ncol(usabletest))
+
+for (i in 1:6){
+  y_final[,i] = predict(ret_final[[i]],newdata = usabletest[,i])
+}
+
+ypred_final=apply(y_final,1,sum)+y_bar  # predictions
+
+pred_final=cbind(test$id,ypred_final)
+
+```
+
+```{r ,eval=FALSE}
+# Here we have the other selected submission (sub_16 setup)
+# Since what we did for sub_9 might be overfitting on the selected validation set
+# we performed one more time the computing of all the rmse but this time selecting a
+# different sample. Instead of trying all the combinations, we tried the combinations that 
+# performed in the first quartile on the other validation set
+
+# N.B the comments in last section are valid for this one as well (line comments and ideas)
+
+ind2=indexes[(which(predictedval$x<=quantile(predictedval$x,0.25))),]
+h = rep(0,6)
+deg = rep(0,6)
+
+set.seed(5431)
+
+predictedval2=rep(0,nrow(ind2))
+
+i=sample(c(1:7500),1500)
+ds = data.frame(train[-i,])
+usable = ds[2:7]
+usable = apply(usable, 2, scale) #rescale
+dsv = data.frame(train[i,])
+usablev = dsv[2:7]
+usablev = apply(usablev, 2, scale) #rescale
+
+
+for (i in 1:nrow(ind2)){
+  cat("\nIteration number = ",i)
+  for (j in 1:6){
+    h[j] = aordered[((ind2[i,j]*2)-1),j]
+    deg[j] = aordered[(ind2[i,j]*2),j]
+  
+  }
+  ret <- newbackfit(ds$target,usable,ds,nn = h , deg = deg)
+  for (t in 1:6){
+    y1[,t] = predict(ret[[t]],newdata = usablev[,t])
+  }
+  ypred=apply(y1,1,sum)+y_bar
+  predictedval2[i] = rmse(dsv$target,ypred)
+}
+
+for (i in 1:3907){
+  predictedval2[i]=predictedval[1,i]
+}
+
+# Now we decided to perform if with another sample size (only for the one performing in the first
+# quartile of predictedval2)
+
+
+ind3=indexes[(which(predictedval2<=quantile(predictedval2,0.25))),]
+predictedval3 = rep(0,nrow(ind3))
+h = rep(0,6)
+deg = rep(0,6)
+
+set.seed(739)
+i=sample(c(1:7500),1500)
+ds = data.frame(train[-i,])
+usable = ds[2:7]
+usable = apply(usable, 2, scale) #rescale
+dsv = data.frame(train[i,])
+usablev = dsv[2:7]
+usablev = apply(usablev, 2, scale) #rescale
+
+
+for (i in 1:nrow(ind3)){
+  cat("\nIteration number = ",i)
+  for (j in 1:6){
+    h[j] = aordered[((ind3[i,j]*2)-1),j]
+    deg[j] = aordered[(ind3[i,j]*2),j]
+    
+  }
+  ret <- newbackfit(ds$target,usable,ds,nn = h , deg = deg)
+  for (t in 1:6){
+    y1[,t] = predict(ret[[t]],newdata = usablev[,t])
+  }
+  ypred=apply(y1,1,sum)+y_bar
+  predictedval3[i] = rmse(dsv$target,ypred)
+}
+
+indexes[which(abs(predictedval3-quantile(predictedval3,0.05))<=0.0000001),]
+# Instead of choosing the minimum, to (hopefully) lower even more the risk of overfitting, we
+# choose the combination of indexes corresponding to the fifth percentile
+```
+
+```{r ,eval=FALSE}
+h_f=c(1,0.2,0.4,0.3,0.9,1)
+deg_f=c(0,1,1,3,1,3)
+
+ret_final <- newbackfit(dstrain$target,usabletrain,dstrain,nn = h_f, deg = deg_f)
+y_final = matrix(0, nrow = length(dstest$id), ncol = ncol(usabletest))
+
+for (i in 1:6){
+  y_final[,i] = predict(ret_final[[i]],newdata = usabletest[,i])
+}
+
+ypred_final=apply(y_final,1,sum)+y_bar 
+
+pred_final=cbind(test$id,ypred_final)
+
+```
+
+#### Visualization section
+
+```{r ,eval=FALSE}
+###########################################################
+
+# Some visualization of the train against the target and 
+# test against the target. Sub_9 and Sub_16 with local parameters
+# are the one considered for the plots.
+
+sub_9 = read.csv("/kaggle/input/submissioncsv/sub_9.csv")
+sub_16 = read.csv("/kaggle/input/submissioncsv/sub_16.csv")
+
+suppressWarnings({
+
+
+plot(usabletrain[,1],dstrain$target,col='red',xlim = c(-1,4))
+points(usabletest[,1],sub_9$target,col='green',add=T)
+points(usabletest[,1],sub_16$target,col='blue',add=T)
+
+plot(usabletrain[,2],dstrain$target,col='red',xlim = c(-1,1))
+points(usabletest[,2],sub_9$target,col='green',add=T)
+points(usabletest[,2],sub_16$target,col='blue',add=T)
+
+plot(usabletrain[,3],dstrain$target,col='red',xlim = c(-3,4))
+points(usabletest[,3],sub_9$target,col='green',add=T)
+points(usabletest[,3],sub_16$target,col='blue',add=T)
+
+plot(usabletrain[,4],dstrain$target,col='red',xlim = c(-4,4))
+points(usabletest[,4],sub_9$target,col='green',add=T)
+points(usabletest[,4],sub_16$target,col='blue',add=T)
+
+plot(usabletrain[,5],dstrain$target,col='red',xlim = c(-1,1))
+points(usabletest[,5],sub_9$target,col='green',add=T)
+points(usabletest[,5],sub_16$target,col='blue',add=T)
+
+plot(usabletrain[,6],dstrain$target,col='red',xlim = c(-6,2))
+points(usabletest[,6],sub_9$target,col='green',add=T)
+points(usabletest[,6],sub_16$target,col='blue',add=T)
+
+})
+
+# As we can see, the general behaviour is similar, and sub_9 seems to have problems predicting high values
+# of the y target, but in general they both tend to "repeat patterns" seen in the red points for
+# all the variables (except the fourth one, in which the test units seems to have much less variance than the 
+# training one)
+```
+
+# Exercise 2: Variable importance - LOCO (Leave-One-Covariate-Out)  
+
+
+## Introduction
+
+```{r ,eval=FALSE}
+N=length(train$target)
+set.seed(123)
+n1<- sample(1:N,1) # sample a random unit
+library("rlist")
+
+
+train=data.frame(train)
+
+Dn1=train[1:n1,] # split up to a random unit
+
+Dn2=train[(n1+1):N,] # create a dataset with everything else
+
+h=c(1,0.2,0.4,0.3,0.9,1) # combination of parameters obtained previously
+deg=c(0,1,1,3,1,3) # both h (nn) and degree
+
+# estimation of fn
+
+target=Dn1$target # target variable
+
+usable_1=Dn1[,2:7] 
+usable_1=apply(usable_1,2,scale) # rescale
+
+lun = length(Dn1$id) # length of the train dataset
+p = ncol(usable_1) # number of predictors
+
+y_bar = mean(Dn1$target) # mean response
+
+fn=newbackfit(Dn1$target,usable_1,Dn1,maxiter=100,tol=0.001,nn = h,deg = deg)
+
+
+# estimate of fn_j (the components without a covariate at a time)
+
+fn_j=list() # list of models 
+
+for (j in 1:6){
+  
+  h=c(0.8,0.2,0.2,0.3,0.2,1)
+  deg=c(1,1,0,3,1,3)
+  
+  # select the predictors except the j-th one 
+  
+  if (j == 1){
+    usable_set1=usable_1[,2:(ncol(usable_1))]
+    h=h[2:6]
+    deg=deg[2:6]
+  }
+  if (j !=1 & j!=6){
+    usable_set1=cbind(usable_1[,1:(j-1)],usable_1[,(j+1):(ncol(usable_1))])
+    h=c(h[1:(j-1)],h[(j+1):6])
+    deg=c(deg[1:(j-1)],deg[(j+1):6])
+  }
+  if (j == 6){
+    usable_set1=usable_1[,1:(ncol(usable_1)-1)]
+    h=h[1:5]
+    deg=deg[1:5]
+    
+  }
+  
+  a=newbackfit(target,usable_set1,Dn1,nn = h,deg = deg)
+  
+  fn_j=list.append(fn_j,a) # add the new list of models to the list of j's
+}
+
+# Initialize the bootstrap with n = 10^4
+
+M=10^4
+theta=matrix(0,nrow=M,ncol=ncol(usable_1)) # matrix of theta j's for mse as lost function
+theta2=matrix(0,nrow=M,ncol=ncol(usable_1)) # matrix of theta j's for rmse as lost function
+theta3=matrix(0,nrow=M,ncol=ncol(usable_1)) # matrix of theta j's using absolute value as lost function
+mse <- function(actual, predicted) { # explicit computation of the mse as our loss of choice
+  mean((actual - predicted)^2)
+}
+
+for (m in 1:M){
+  
+  nsim=length(Dn2$id) # population of Dn2 from which we resample
+  i=sample(1:nsim,nsim,replace=T) # sample with replacement of indexes
+  Sample=Dn2[i,] # actual selection of the sample
+  usables=Sample[,2:7] # selection of predictor columns 
+  ys=Sample[,8] # selection of the real target column
+  usables=apply(usables,2,scale) # rescale
+  
+  y1=matrix(0,nrow=nrow(Dn2),ncol=ncol(usables)) 
+  y0=matrix(0,nrow=nrow(Dn2),ncol=ncol(usables))
+  
+  y_bar = mean(Dn1$target)
+  
+  # the first cycle computes fn(y) and saves it in y0
+  
+  for (i in 1:6){
+    y0[,i] = predict(fn[[i]],newdata = usables[,i])
+  }
+  
+  # Then we transform y0 into actual predicted values 
+  
+  ypred0=apply(y0,1,sum)+y_bar 
+  
+  # The second cycle computes fn_j(y)
+  
+  for (j in 1:ncol(usable_1)){
+    
+    usable_eff=usables # reset at each cycle all the predictors
+    usable_eff=usable_eff[,-j] # exclude one predictor at a time
+    for (i in 1:5){
+      
+      y1[,i] = predict(fn_j[[j]][[i]],newdata = usable_eff[,i])
+      
+    }
+    
+    # Final step, prediction of on test data
+    
+    ypred=apply(y1,1,sum)+y_bar 
+    
+    # computing the thetas_j for each iteration with normalization the 
+    # median absolute deviation of the target ys.
+    # We found this result in the literature (https://www.stat.cmu.edu/~ryantibs/talks/loco-2018.pdf),
+    # with acknowledgments to the paper given in the notebook notes.
+    # This normalizes over the median of the absolute values of the difference
+    # of the medians. This is a robust dispersion index and gives us an idea 
+    # of how much the data are disperse giving less weight to the outliers
+    mad_y=mad(ys)
+    
+    theta[m,j]=median(mse(ys,ypred)-mse(ys,ypred0))
+    theta[m,j]=theta[m,j]/mad_y
+    theta2[m,j]=median(rmse(ys,ypred)-rmse(ys,ypred0))
+    theta2[m,j]=theta2[m,j]/mad_y
+    theta3[m,j]=median((abs(ys-ypred))-(abs(mse(ys,ypred0))))
+    theta3[m,j]=theta3[m,j]/mad_y
+    
+  }
+  
+}
+
+theta_mse=apply(theta,2,median)
+theta_rmse=apply(theta2,2,median)
+theta_abs=apply(theta3,2,median)
+alpha=0.05
+
+
+# we chose alpha=0.5, we are applying the Bonferroni correction so the single confidence interval 
+# are going to be at level 1-alpha/6
+
+c_int1=matrix(0, ncol=2,nrow=6)
+c_int2=matrix(0, ncol=2,nrow=6)
+c_int3=matrix(0, ncol=2,nrow=6)
+
+for (i in 1:6){
+  c_int1[i,]=c(quantile(theta[,i],alpha/2/6),quantile(theta[,i],1-(alpha/2/6)))
+  c_int2[i,]=c(quantile(theta2[,i],alpha/2/6),quantile(theta2[,i],1-(alpha/2/6)))
+  c_int3[i,]=c(quantile(theta3[,i],alpha/2/6),quantile(theta3[,i],1-(alpha/2/6)))
+}
+
+theta_mse
+theta_rmse
+theta_abs
+
+#From this result we can see how the feature 5 is the most important one for mse and rmse, and after
+#there is the number 4, which according to the absolute value is the most important one, 
+#in general rmse and mse predicted the same order of importance of the features.
+
+c_int1 #mse
+c_int2 #rmse
+c_int3 # absolute value
+
+c_int1[,2]-c_int1[,1]
+c_int2[,2]-c_int2[,1]
+c_int3[,2]-c_int3[,1]
+
+#As wee can see in the confidence interval for theta_mse and theta_rmse are very similar and also theirs 
+#width are quite the same except for the fifth feauture which theta_rmse predicted more accurately,
+#(not necessarily precisely)
+#the confidence interval for theta_abs are in general bigger (aside from second and sixth), but it's
+#interesting to notice how they share more or less the same length for each predictor
+```
+
+
+```{r, eval=FALSE}
+data <- data.frame(
+  LowerBound = c_int1[,1],
+  Thetamse = theta_mse,
+  Upperbound = c_int1[,2],
+  width = c_int1[,2] - c_int1[,1]
+)
+
+kable(data, align = "c") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+```{r, eval=FALSE}
+data2 <- data.frame(
+  LowerBound = c_int2[,1],
+  Thetarmse = theta_rmse,
+  Upperbound = c_int2[,2],
+  width = c_int2[,2] - c_int2[,1]
+)
+
+kable(data2, align = "c") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+```{r, eval=FALSE}
+
+data3 <- data.frame(
+  LowerBound = c_int3[,1],
+  Thetaabs = theta_abs,
+  Upperbound = c_int3[,2],
+  width = c_int2[,2] - c_int2[,1]
+)
+
+kable(data3, align = "c") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+

@@ -1,0 +1,407 @@
+---
+title: "Statistical Learning - HW2 - Part B"
+author: "G06 - Camilla Brigandì, Francesco Lazzari, Paolo Meli, Matteo Pazzini, Riccardo Violano"
+date: "03-06-2024"
+output: 
+  html_document:
+    df_print: kable
+    code_folding: hide
+    theme: 
+      color-contrast-warnings: false
+      bg: "white"
+      fg: "black"
+      primary: "black"
+      secondary: "black"
+      base_font: 
+        google: Hedvig Letters Serif
+      heading_font:
+        google: Bree Serif
+    toc: yes
+    toc_float: 
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 72 
+---
+
+```{=html}
+<style>
+.center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+p.caption {
+  font-size: 0.6em;
+}
+</style>
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center')
+```
+
+
+```{r libraries & seed, message=FALSE, warning=FALSE, echo = FALSE}
+# Libraries -------------------------------------------
+library(xgboost)
+library(dplyr)
+library(Matrix)
+library(caret)
+library(readr)
+library(parallel)
+library(ggplot2)
+library(tidyr)
+
+# Seed for reproducibility ----------------------------
+set.seed(543)
+
+# Set the working directory ---------------------------
+directory <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(directory)
+
+```
+
+```{r part B functions, message=FALSE, warning=FALSE, echo = TRUE}
+
+# Function that finds the conformal score for one observation in the calibration set
+get_conformal_scores <- function(pred_prob, true_class, alpha){
+  pred_sort_withidx <- sort(pred_prob, decreasing = T,  index.return=T)
+  
+  sorting_idx <- pred_sort_withidx$ix       # indeces ordering permutation
+  prob_sorted <- pred_sort_withidx$x        # sorted values
+
+  true_class_aftersort <- which( sorting_idx == as.numeric(true_class) )   # as.numeric(factor(i)) = i+1 
+  
+  conformal_score <-  sum(prob_sorted[1 : true_class_aftersort]) 
+  
+  return(conformal_score)
+}
+
+
+# Function that finds the quantile of the calibration scores distribution at the "adjusted" level 
+get_qhat <- function(pred_prob_calibration, calibration_labels, alpha = 0.1 ){
+  n = nrow(pred_prob_calibration)
+  
+  conf_score <-  c()
+  for (i in 1:n){
+    conf_score[i] <- get_conformal_scores(pred_prob_calibration[i,], true_class = calibration_labels[i], alpha = alpha)
+  }
+  
+  quant_level <- ceiling( ((n + 1)*(1 - alpha) )) / n
+  q_hat <- quantile(conf_score, quant_level )
+  
+  
+  return(q_hat)
+}
+
+
+# This function returns the APS of one observation on the test set; the quantile required is the one spitted out by the previous function
+APS_ontest <- function(q_hat, pred_prob_test){
+  
+  pred_sort_withidx <- sort(pred_prob_test, decreasing = T,  index.return=T)
+  
+  sorting_idx <- pred_sort_withidx$ix       # sorting indeces permutation
+  prob_sorted <- pred_sort_withidx$x        # sorted values
+  
+  prob_sorted_cumsum <- cumsum(prob_sorted)
+  
+  argmax_probcum_less_qhat <- max(which( prob_sorted_cumsum < q_hat )) 
+  
+  target_classes <- sorting_idx[ 1 : (argmax_probcum_less_qhat + 1 )] - 1 # -1 because classes go from 0 to 5 while indeces from                                                                       1 to 6
+  return(target_classes)
+}
+
+```
+
+## PartB.1 - APS implementation with best model
+
+The first thing we are required to do for this part of the homework is to implement the Adaptive Predictive Sets algorithm using the best model from Part A. 
+
+In order to do so, we implemented tree different functions that help us in getting some of the quantities of interest for the algorithm. In particular: 
+
+- the function **`get_conformal_scores`**, as its name says, given in input the needed quantites (the vector of predictive probabilities on one point, the label of the point, and the level of confidence $\alpha$), returns the conformal score of the given point;
+
+- the function **`get_qhat`** takes as input the vector of scores on the calibration set, the vector of labels of the calibration set (ordered in the same way as the one of the scores, meaning that $\text{scores}[i] = \text{score}( p_i ) \iff \text{labels}[i] = \text{label}( p_i )$ ) and $\alpha$, and returns the quantile at level $\frac{\lceil(n+1)(1-\alpha)\rceil}{n}$, where $n$ is the number of observations in the calibration set;
+
+- the function **`APS_ontest`** finally returns the APS for a given point, taking as input the quantile computed using the previous function and the vector of predicted probabilities for that point.
+
+There are a few things remaining that we need to clarify before explaining our work pipeline. The first one is the definition of the (conformal) score function we used: following the guidelines of the paper, we set
+$$
+s(x, y)=\sum_{j=1}^k \hat{f}(x)_{\pi_j(x)} \, \text {, where } y=\pi_k(x)
+$$
+and $\pi$ is the permutation over $\{1, \dots n_{\text{classes}} \}$ that orders the predictive probabilities $\hat{f}(x)_j, \, j \in \{ 1, \dots, \,n_{\text{classes}} \}$ estimated by the model in descending order. The other little clarification is that we arbitrarly decided to set $\alpha = 0.1$, to have $0.9$ coverage probability for each sample.
+
+A sketch of the steps to follow to get APS on a given point, now that we described the functions we implemented is the following: 
+
+1. Given the data, set aside the calibration set from the training set;
+
+2. Train the model on the remaining training set;
+
+3. Compute the conformal scores on the calibration set with **`get_conformal_scores`** and get $\hat{q}$ using **`get_qhat`**;
+
+4. Use **`APS_ontest`** to compute the APS for the target points.
+
+## Part B.2, B.3 - Compute the APS
+
+Now it's time to dig into our work pipeline. The first thing we did, after loading the dataset of course, was extracting 500 observation from the trainset to use as calibration set.
+Then, with the remaining units in the training set, we re-trained the XGBoost Model with the best parameters found in part A. 
+
+```{r dataset, message=FALSE, warning=FALSE, echo = TRUE}
+
+# Load dataset - trainset and testset are the preprocessed version of the original files 
+trainset <- read_csv("Data/train_f.csv") 
+testset <- read_csv("Data/test_f.csv")
+trainset <- data.frame(trainset)
+testset <-  testset[names(testset) != "...1"] # remove old row indexes
+trainset <- trainset[names(trainset) != "...1"]
+
+train_original <- read_csv("Data/train.csv") 
+
+# Load the preprocessed version of the 10 observations set aside from part 1
+faketest <- read_csv("Data/10obs_f.csv")
+faketest <- data.frame(faketest)
+faketest <- faketest[names(faketest) != "...1"]
+
+a=faketest
+
+# Extract calibration set
+calibration_set_idx <- sample(1:nrow(trainset), size = 1000)
+calibrationset <- trainset[ calibration_set_idx, ]
+
+# Remove the calibration set from the training set 
+trainset <- trainset[ - calibration_set_idx,]
+
+# Remove ids from train and test set 
+trainset <- trainset[names(trainset) != "original_id"]
+testset <- testset[names(testset) != "original_id"]
+
+```
+
+```{r train model, message=FALSE, warning=FALSE, echo = TRUE, results = FALSE}
+# Prepare data for training
+label_train <- trainset$y
+label_train <- as.numeric(factor(as.matrix(label_train))) - 1
+sparse_matrix <- trainset
+sparse_matrix <- sparse_matrix %>% select(-y)
+
+# Create DMatrix 
+dtrain <- xgb.DMatrix(data = as.matrix(sparse_matrix), label =  label_train)
+
+# Initialize model parameters (best parameters from part A)
+best_params <- list(
+  objective = "multi:softprob",
+  num_class = 6,
+  eval_metric = "mlogloss",
+  max_dep = 11,
+  eta = 0.01, 
+  gamma = 0.4,
+  colsample_bytree = 0.7,
+  min_child_weight = 2,
+  subsample = 0.85 
+)
+
+indexv = sample(1:nrow(trainset),floor(0.2*nrow(trainset)))
+indext = c(1:nrow(trainset))[-indexv]
+
+# Train model 
+best_model_prob <- xgb.train(
+  params = best_params,
+  data = dtrain[as.integer(indext),],
+  watchlist = list(train = dtrain[as.integer(indext),], val = dtrain[as.integer(indexv),]),
+  early_stopping_rounds = 100,
+  nrounds = 10000,
+  maximize = F
+)
+
+
+```
+
+The next step is to calculate the predictions (in the form of probabilities) on the calibration set, so that the score for each point in the calibration set can be calculated, and from this the quantile of the distribution of that score at the level of interest.
+
+```{r calibrarion set, message=FALSE, warning=FALSE, echo = TRUE}
+
+# Prepare calibration set to get predictions
+calibration_labels <- factor(calibrationset$y)
+calibrationset <- calibrationset[names(calibrationset) != "y"]
+calibrationset <- calibrationset[names(calibrationset) != "original_id"]
+
+# Get predictions (probability for each class) on the calibration set 
+pred_prob_calibration <- predict(best_model_prob, newdata = as.matrix(calibrationset))
+
+# Organize prediction on the calibration set
+pred_prob_calibration <- matrix(pred_prob_calibration, ncol = 6, byrow = T)
+colnames(pred_prob_calibration) = c(0:5)
+
+# Get the quantile for the APS calculations
+qhat <- get_qhat(pred_prob_calibration, calibration_labels, alpha = 0.1)
+```
+
+
+
+### B.2 -APS on 10 observations of the training set
+
+The first calculations of the APS we have to do are on the $10$ observations of the training set we set aside from the training set in part 1.
+To do so, we need first to compute the predictivwe probabilities on this subset, and then ger the APS.
+
+```{r partB.2, message=FALSE, warning=FALSE, echo = TRUE}
+
+# Prepare the 10 observations for predictions 
+faketest_label <- factor(faketest$y)
+faketest <- faketest[names(faketest) != "y"]
+faketest <- faketest[names(faketest) != "original_id"]
+
+# Get predictions on the 10 observations and organize them
+pred_faketest <- predict(best_model_prob, newdata = as.matrix(faketest) )
+pred_faketest <- matrix(pred_faketest, ncol = 6, byrow=T)
+colnames(pred_faketest) = c(0:5)
+
+# Get APS on the 10 observations 
+aps_faketest_01 <- apply(pred_faketest, 1, APS_ontest, q_hat = qhat)
+```
+
+
+```{r plotB2, message=FALSE, warning=FALSE, echo = FALSE}
+###First Plot, APS and true value on 10 "validation/fake_test" observation
+
+colours=matrix('grey',nrow=10,ncol=6)
+for (i in 1:length(aps_faketest_01)){
+  for(j in 1:length(aps_faketest_01[[i]])){
+    colours[i,(aps_faketest_01[[i]][j]+1)]='darkblue'
+  }
+}
+outline=colours
+for (i in 1:length(a$y)){
+  outline[i,a$y[i]+1]='tomato'
+}
+
+df <- as.data.frame(pred_faketest)
+df$row <- 1:nrow(df)
+df_long <- pivot_longer(df, cols = -row, names_to = "col", values_to = "prob")
+
+# Flatten colours and outline matrices for easy mapping
+colours_flat <- as.vector(t(colours))
+outline_flat <- as.vector(t(outline))
+
+# Create the plot
+ggplot(df_long, aes(x = col, y = row, size = prob)) +
+  geom_point(shape = 21, fill = colours_flat, color = outline_flat, stroke = 1.5 ) +
+  scale_size_continuous(range = c(1, 10)) +
+  scale_y_reverse() +
+  theme_minimal() +
+  theme(legend.position = "none",
+        panel.grid.major.y = element_line(color = "grey80", linewidth = 0.5),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = "Class", y = "", title = "Grid of Points with Size Proportional to Probability") +
+  scale_y_continuous(breaks = seq(1, nrow(df_long), by = 1))
+```
+
+From the plot we can see that the true class (corresponding to the point with the red outline) is always captured from the APS, even if it's not the predicted class (indeed, the predicted class will be the one with the highest probability, that in this cas can be recognized since it's the bigger point on the line). On the other hand, we can see that, as expected, the more confident the model is in making a prediction (the bigger the biggest dot in the line is), the smallest the APS is (see, for example the 6th row).
+
+
+### B.3 - APS on 100 units from the test set
+
+The second round of APS calculation is made on $100$ points randomly taken from the test set.  
+
+```{r partB.3, message=FALSE, warning=FALSE, echo = TRUE}
+
+# Randomly extract 100 observation from the test set 
+test_sample_idx <- sample(1:nrow(testset), size = 100, replace = T)
+test_sample <- testset[test_sample_idx, ]
+
+# Get predictions on the subset of the test set
+pred_test_sample <- predict(best_model_prob, newdata = as.matrix(test_sample))
+pred_test_sample <- matrix(pred_test_sample, ncol=6, byrow = T)
+colnames(pred_test_sample) = c(0:5)
+
+# Get the APS for this sample
+aps_testsample <- apply(pred_test_sample, 1, APS_ontest, q_hat = qhat)
+```
+
+To get an idea of what are the results we get back, we represent here the rough results of the calculation of the APs of $20$ of this points.
+
+```{r plotB.3, message=FALSE, warning=FALSE, echo = FALSE}
+###Second and third Plot, APS 100 test observation in two batch by 50
+colours1=matrix('grey',nrow=100,ncol=6)
+
+for (i in 1:length(aps_testsample)){
+  for(j in 1:length(aps_testsample[[i]])){
+    colours1[i,(aps_testsample[[i]][j]+1)]='darkblue'
+  }
+}
+
+
+
+
+df1_long <- as.data.frame(pred_test_sample)
+df2_long=df1_long[1:20,]
+df2_long$row <- 1:nrow(df2_long)
+df2_long <- pivot_longer(df2_long, cols = -row, names_to = "col", values_to = "prob")
+colours2=colours1[1:20,]
+
+# Flatten colours1 matrix for easy mapping
+colours_flat2 <- as.vector(t(colours2))
+
+# Create the plot
+ggplot(df2_long, aes(x = col, y = row, size = prob)) +
+  geom_point(shape = 21, fill = colours_flat2, color ="grey80", stroke =.2 ) +
+  scale_size_continuous(range = c(1, 6)) +
+  scale_y_reverse() +
+  theme_minimal() +
+  theme(legend.position = "none",
+        panel.grid.major.y = element_line(color = "grey80", linewidth = 0.5),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = "Class", y = "", title = "Grid of Points with Size Proportional to Probability") +
+  scale_y_continuous(breaks = seq(1, nrow(df2_long), by = 1))
+```
+
+
+If we want to investigate the model and the test set interact in a more meaningful way, we can do a barplot of the size of the APSs on these $100$ points.
+
+
+```{r barplotB.3, message=FALSE, warning=FALSE, echo = FALSE}
+aps_testsample2=matrix(0,nrow=100,ncol=2)
+
+for(i in 1:length(aps_testsample)){
+  aps_testsample2[i,1]=aps_testsample[[i]][1]
+  aps_testsample2[i,2]=length(aps_testsample[[i]])
+}
+
+aps_testsample2 <- as.data.frame(aps_testsample2)
+colnames(aps_testsample2) <- c("Value", "Count")
+
+ggplot(aps_testsample2, aes(x = Value)) +
+  geom_histogram(binwidth = 0.5, fill = "royalblue", color = "black") +
+  theme_minimal() +
+  labs(x = "Size", y = "Frequency", title = "Barplot of the number of classes in each set")
+```
+
+From the previous plot we can see that most of the APS consist of three elements and that, on the other hand, very few sets consist of only $1$ class and none of them of all the classes. This can get us some insight on our model's behaviour on the test data. In particoular, we can say that the model isn't strongly confident in making predictions (elseway an high number of APSs would be made of 1/2 variables), and, at the same time, that there are very few cases in which it is almost in the dark (elseway we would have lots of APSs with five or evem 6 elements).
+
+```{r plotB.3 2, message=FALSE, warning=FALSE, echo = FALSE}
+#Fourth Plot, average number of elements in confidence set grouped by most likely class
+aps_testsample2=matrix(0,nrow=100,ncol=2)
+for(i in 1:length(aps_testsample)){
+  aps_testsample2[i,1]=aps_testsample[[i]][1]
+  aps_testsample2[i,2]=length(aps_testsample[[i]])
+}
+
+#table(aps_testsample2[,1],aps_testsample2[,2])
+colnames(aps_testsample2) <- c("Category", "Value")
+aps_testsample2=data.frame(aps_testsample2)
+# Ensure the Value column is numeric
+aps_testsample2$Value <- as.numeric(as.character(aps_testsample2$Value))
+
+# Calculate the mean values for each category
+mean_values <- aggregate(Value ~ Category, data = aps_testsample2, FUN = mean)
+
+# Create the barplot
+ggplot(mean_values, aes(x = Category, y = Value)) +
+  geom_bar(stat = "identity", fill = "royalblue", color = "black") +
+  theme_minimal() +
+  labs(x = "Predicted Class", y = "Average APS Size", title = "Average APS size by predicted class")
+```
+
+Further insight is given from this lst plot. Indeed, we can see that, continuing on the same interpretation as before, the uncertainty of the model is higher when it predicts classes $1$ and $0$, corresponding to low-hearth-rate zones. 
